@@ -26,14 +26,15 @@ Running Cellpose is done via a script and is very similar to the excellent [QuPa
 import qupath.ext.biop.cellpose.Cellpose2D
 
 TODO
-// Specify the model .pb file (you will need to change this!)
-def pathModel = '/path/to/dsb2018_heavy_augment.pb'
+// Specify the model name (cyto, nuc, cyto2 or a path to your custom model)
+def pathModel = 'cyto'
 
-def stardist = StarDist2D.builder(pathModel)
-        .threshold(0.5)              // Probability (detection) threshold
-        .channels('DAPI')            // Select detection channel
+def cellpose = Cellpose2D.builder(pathModel)
+        .probabilityThreshold(0.3)   // Probability (detection) threshold
+        .channels('DAPI')            // Select detection channel(s)
         .normalizePercentiles(1, 99) // Percentile normalization
         .pixelSize(0.5)              // Resolution for detection
+        .diameter(30)                // Average diameter of objects in px (at the requested pixel sie)
         .cellExpansion(5.0)          // Approximate cells based upon nucleus expansion
         .cellConstrainScale(1.5)     // Constrain cell expansion using nucleus size
         .measureShape()              // Add shape measurements
@@ -45,10 +46,10 @@ def stardist = StarDist2D.builder(pathModel)
 def imageData = getCurrentImageData()
 def pathObjects = getSelectedObjects()
 if (pathObjects.isEmpty()) {
-    Dialogs.showErrorMessage("StarDist", "Please select a parent object!")
+    Dialogs.showErrorMessage("Cellpose", "Please select a parent object!")
     return
 }
-stardist.detectObjects(imageData, pathObjects)
+cellpose.detectObjects(imageData, pathObjects)
 println 'Done!'
 ```
 
@@ -59,12 +60,12 @@ If you use this extension, you should cite the original Cellpose publication
 [*Cellpose: a generalist algorithm for cellular segmentation*](https://arxiv.org/abs/1806.03535)
 Nat Methods 18, 100–106 (2021). https://doi.org/10.1038/s41592-020-01018-x
 
-You should also cite the QuPath publication, as described [here](https://qupath.readthedocs.io/en/stable/docs/intro/citing.html).
+**You should also cite the QuPath publication, as described [here](https://qupath.readthedocs.io/en/stable/docs/intro/citing.html).**
 
 
 ## Building
 
-You can build the QuPath StarDist extension from source with
+You can build the QuPath Cellpose extension from source with
 
 ```bash
 gradlew clean build
@@ -74,3 +75,9 @@ The output will be under `build/libs`.
 
 * `clean` removes anything old
 * `build` builds the QuPath extension as a *.jar* file and adds it to `libs`
+
+## First Run
+
+If you never ran Cellpose before, it will download its pretrained models the first time you run it. This may take some time and we've experienced the process hanging. If it hangs during the download  go to `Run > Kill Running Script`. Then run the script again. It will continue downloading the pretrained models. You may need to do this more than once...
+
+Another alternative is to run cellpose once from the command line before running it within QuPath. 
