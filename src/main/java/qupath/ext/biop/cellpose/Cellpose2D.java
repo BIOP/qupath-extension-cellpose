@@ -28,13 +28,13 @@ import org.locationtech.jts.index.strtree.STRtree;
 import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.biop.cmd.VirtualEnvironmentRunner;
 import qupath.lib.analysis.features.ObjectMeasurements;
 import qupath.lib.analysis.features.ObjectMeasurements.Compartments;
 import qupath.lib.analysis.features.ObjectMeasurements.Measurements;
 import qupath.lib.analysis.images.ContourTracing;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.geom.ImmutableDimension;
-import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.*;
 import qupath.lib.images.servers.ColorTransforms.ColorTransform;
@@ -51,7 +51,6 @@ import qupath.lib.roi.RoiTools;
 import qupath.lib.roi.interfaces.ROI;
 import qupath.lib.scripting.QP;
 import qupath.opencv.ops.ImageDataOp;
-import qupath.opencv.ops.ImageDataServer;
 import qupath.opencv.ops.ImageOp;
 import qupath.opencv.ops.ImageOps;
 import qupath.opencv.tools.OpenCVTools;
@@ -496,8 +495,8 @@ public class Cellpose2D {
 
             // Ensure there are only 2 channels at most
             if( channels.length > 2) {
-                channels = Arrays.copyOf(channels, 2);
                 logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two", channels.length);
+                channels = Arrays.copyOf(channels, 2);
             }
             cellpose.op = ImageOps.buildImageDataOp(channels).appendOps(mergedOps.toArray(ImageOp[]::new));
 
@@ -650,6 +649,7 @@ public class Cellpose2D {
 
         // Recover all the images from CellPose to get the masks
         allTiles.parallelStream().forEach(tileMap -> {
+            PathObject parent = tileMap.getObject();
             // Read each image
             List<PathObject> allDetections = Collections.synchronizedList(new ArrayList<PathObject>());
             tileMap.getTileFiles().parallelStream().forEach(tilefile -> {
@@ -676,7 +676,7 @@ public class Cellpose2D {
             List<PathObject> filteredDetections = filterDetections(allDetections);
 
             // Remove the detections that are not contained within the parent
-            Geometry mask = tileMap.getObject().getROI().getGeometry();
+            Geometry mask = parent.getROI().getGeometry();
             filteredDetections = filteredDetections.stream().filter(t -> mask.covers(t.getROI().getGeometry())).collect(Collectors.toList());
 
             // Convert to detections, dilating to approximate cells if necessary
@@ -694,7 +694,7 @@ public class Cellpose2D {
 
             // Resolve cell overlaps, if needed
             if (expansion > 0 && !ignoreCellOverlaps) {
-                logger.info("Resolving cell overlaps");
+                logger.info("Resolving cell overlaps for {}", parent);
                 if (creatorFun != null) {
                     // It's awkward, but we need to temporarily convert to cells and back
                     var cells = filteredDetections.stream().map(c -> objectToCell(c)).collect(Collectors.toList());
@@ -710,7 +710,7 @@ public class Cellpose2D {
 
             // Add intensity measurements, if needed
             if (!filteredDetections.isEmpty() && !measurements.isEmpty()) {
-                logger.info("Making measurements");
+                logger.info("Making measurements for {}", parent);
                 var stains = imageData.getColorDeconvolutionStains();
                 var builder = new TransformedServerBuilder(server);
                 if (stains != null) {
@@ -734,7 +734,8 @@ public class Cellpose2D {
             }
 
             // Assign the objects to the parent object
-            tileMap.getObject().setLocked(true);
+            parent.setLocked(true);
+            parent.clearPathObjects();
             tileMap.getObject().addPathObjects(filteredDetections);
         });
 
@@ -926,118 +927,55 @@ public class Cellpose2D {
      * @throws InterruptedException Exception in case of command thread has some failing
      */
     private void runCellPose() throws IOException, InterruptedException {
-        List<String> cmd = new ArrayList<>();
 
-        File cellPoseEnv = new File(PathPrefs.createPersistentPreference("cellposeEnvPath", "").getValue());
+        // Get options
+        CellposeOptions cellposeOptions = CellposeOptions.getInstance();
 
+        // Set the arguments to run Cellpose
 
-        // Get the prefs about the env type
-        String envType = PathPrefs.createPersistentPreference("cellposeEnvType", "").getValue();
-        boolean useGPU = PathPrefs.createPersistentPreference("cellposeUseGPU", false).getValue();
+        // Create command to run
+        VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeOptions.getEnvironmentNameorPath(), cellposeOptions.getEnvironmentType());
 
-        // Depending of the env type
-        if (envType.equals("conda")) {
-            List<String> conda_activate_cmd = null;
+        // This is the list of commands after the 'python' call
+        List<String> cellposeArguments = new ArrayList<>();
 
-            if (currentPlatform().equals("win")) {
-                conda_activate_cmd = Arrays.asList("cmd.exe", "/C", "conda", "activate", cellPoseEnv.getAbsolutePath());
-            } else if (IJ.isLinux() || IJ.isMacOSX()) {
-                // https://docs.conda.io/projects/conda/en/4.6.1/user-guide/tasks/manage-environments.html#id2
-                conda_activate_cmd = Arrays.asList("bash", "-c", "conda", "source", "activate", cellPoseEnv.getAbsolutePath());
-            }
-            cmd.addAll(conda_activate_cmd);
+        cellposeArguments.addAll(Arrays.asList("-W", "ignore", "-m", "cellpose"));
 
-        } else if (envType.equals("venv")) { // venv
-            List<String> venv_activate_cmd = Arrays.asList("cmd.exe", "/C", new File(cellPoseEnv, "Scripts/activate").getAbsolutePath());
-            cmd.addAll(venv_activate_cmd);
-        } else {
-            logger.error("Virtual env type unrecognized!");
-        }
+        cellposeArguments.add("--dir");
+        cellposeArguments.add("" + this.cellposeTempFolder);
 
-        // After starting the env we can now use cellpose
-        cmd.add("&");// to have a second line
-        List<String> cellpose_args_cmd = Arrays.asList("python", "-W", "ignore", "-m", "cellpose");
-        cmd.addAll(cellpose_args_cmd);
+        cellposeArguments.add("--pretrained_model");
+        cellposeArguments.add("" + this.model);
 
-        ArrayList<String> options = new ArrayList<>();
-
-        options.add("--dir");
-        options.add("" + this.cellposeTempFolder);
-
-        options.add("--pretrained_model");
-        options.add("" + this.model);
-
-        options.add("--chan");
-        options.add("1");
+        cellposeArguments.add("--chan");
+        cellposeArguments.add("1");
 
         if (nChannels > 1) {
-            options.add("--chan2");
-            options.add("2");
+            cellposeArguments.add("--chan2");
+            cellposeArguments.add("2");
         }
 
-        options.add("--diameter");
-        options.add("" + diameter);
+        cellposeArguments.add("--diameter");
+        cellposeArguments.add("" + diameter);
 
-        options.add("--flow_threshold");
-        options.add("" + flowThreshold);
+        cellposeArguments.add("--flow_threshold");
+        cellposeArguments.add("" + flowThreshold);
 
-        options.add("--cellprob_threshold");
-        options.add("" + probabilityThreshold);
+        cellposeArguments.add("--cellprob_threshold");
+        cellposeArguments.add("" + probabilityThreshold);
 
-        options.add("--save_tif");
+        cellposeArguments.add("--save_tif");
 
-        options.add("--no_npy");
+        cellposeArguments.add("--no_npy");
 
-        if(useGPU) options.add("--use_gpu");
+        if(cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
 
-        // input options
-        cmd.addAll(options);
-        logger.info("Executing command: {}", cmd.toString().replace(",",""));
+        veRunner.setArguments(cellposeArguments);
 
+        // Finally, we can run Cellpose
+        veRunner.runCommand();
 
-        // Now the cmd line is ready
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-
-        Process p = pb.start();
-
-        Thread t = new Thread(Thread.currentThread().getName() + "-" + p.hashCode()) {
-            @Override
-            public void run() {
-                BufferedReader stdIn = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                String console = "cellpose";
-                try {
-                    for (String line = stdIn.readLine(); line != null; ) {
-                        logger.info("{}: {}", console, line);
-                        line = stdIn.readLine();
-                    }
-                } catch (IOException e) {
-                    logger.warn(e.getMessage());
-                }
-            }
-        };
-        t.setDaemon(true);
-        t.start();
-
-        p.waitFor();
-
-        logger.info("Done with CellPose");
-
-    }
-
-    /**
-     * Convenience method to pick up the current platform we are running from
-     * @return a String of either 'windows', 'linux', 'mac' or 'unknown'
-     */
-    public static String currentPlatform() {
-        var os = System.getProperty("os.name").toLowerCase();
-        if (os.indexOf("win") >= 0)
-            return "windows";
-        else if (os.indexOf("nix") >= 0 || os.indexOf("nux") >= 0)
-            return "linux";
-        else if (os.indexOf("mac") >= 0)
-            return "mac";
-        else
-            return "unknown";
+        logger.info("Cellpose command finished running");
     }
 
     private static class TileFile {
