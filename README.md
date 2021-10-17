@@ -30,7 +30,7 @@ TODO
 def pathModel = 'cyto'
 
 def cellpose = Cellpose2D.builder(pathModel)
-        .probabilityThreshold(0.3)   // Probability (detection) threshold
+        .probabilityThreshold(0.5)   // Probability (detection) threshold
         .channels('DAPI')            // Select detection channel(s)
         .normalizePercentiles(1, 99) // Percentile normalization
         .pixelSize(0.5)              // Resolution for detection
@@ -39,7 +39,6 @@ def cellpose = Cellpose2D.builder(pathModel)
         .cellConstrainScale(1.5)     // Constrain cell expansion using nucleus size
         .measureShape()              // Add shape measurements
         .measureIntensity()          // Add cell measurements (in all compartments)
-        .includeProbability(true)    // Add probability as a measurement (enables later filtering)
         .build()
 
 // Run detection for the selected objects
@@ -52,7 +51,6 @@ if (pathObjects.isEmpty()) {
 cellpose.detectObjects(imageData, pathObjects)
 println 'Done!'
 ```
-
 ## Citing
 
 If you use this extension, you should cite the original Cellpose publication
