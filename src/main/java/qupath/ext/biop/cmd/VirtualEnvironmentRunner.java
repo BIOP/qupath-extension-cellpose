@@ -28,7 +28,7 @@ public class VirtualEnvironmentRunner {
     private List<String> arguments;
 
     /**
-     * This enum helps us figure out the type of virtualenv. We need to change {@link #getStartCommand()} as well.
+     * This enum helps us figure out the type of virtualenv. We need to change {@link #getActivationCommand()} as well.
      */
     public enum EnvType {
         CONDA("Anaconda or Miniconda", "If you need to start your virtual environment with 'conda activate' then this is the type for you"),
@@ -55,14 +55,18 @@ public class VirtualEnvironmentRunner {
     public VirtualEnvironmentRunner(String environmentNameOrPath, EnvType type) {
         this.environmentNameOrPath = environmentNameOrPath;
         this.envType = type;
+        if (envType.equals(EnvType.OTHER))
+            logger.error("Environment is unknown, please set the environment type to something different than 'Other'");
     }
 
     /**
      * This methods returns the command that will be needed by the {@link ProcessBuilder}, to start Python in the
-     * desired virtual environment type
+     * desired virtual environment type.
+     * Issue is that under windows you can just pile a bunch of Strings together, and it runs
+     * In Mac or UNIX, the bash -c command must be followed by the full command enclosed in quotes
      * @return a list of Strings up to the start of the 'python' command. Use {@link #setArguments(List)} to set the actual command to run.
      */
-    private List<String> getStartCommand() {
+    private List<String> getActivationCommand() {
 
         Platform platform = Platform.getCurrent();
         List<String> cmd = new ArrayList<>();
@@ -71,32 +75,28 @@ public class VirtualEnvironmentRunner {
             case CONDA:
                 switch (platform) {
                     case WINDOWS:
-                        cmd.addAll(Arrays.asList("cmd.exe", "/C", "conda", "activate", environmentNameOrPath, "&", "python"));
+                        cmd.addAll(Arrays.asList("conda", "activate", environmentNameOrPath, "&", "python"));
                         break;
                     case UNIX:
                     case OSX:
-                        // https://docs.conda.io/projects/conda/en/4.6.1/user-guide/tasks/manage-environments.html#id2
-                        cmd.addAll(Arrays.asList("bash", "-c", "conda", "activate", environmentNameOrPath, "&", "python"));
+                        cmd.addAll(Arrays.asList("conda", "activate", environmentNameOrPath, ";", "python"));
                         break;
                 }
                 break;
-
             case VENV:
                 switch (platform) {
                     case WINDOWS:
-                        cmd.addAll(Arrays.asList("cmd.exe", "/C", new File(environmentNameOrPath, "Scripts/python.exe").getAbsolutePath()));
+                        cmd.addAll(Arrays.asList(new File(environmentNameOrPath, "Scripts/python").getAbsolutePath()));
                         break;
                     case UNIX:
                     case OSX:
-                        cmd.addAll(Arrays.asList("bash", "-c", new File(environmentNameOrPath, "bin/python").getAbsolutePath()));
+                        cmd.addAll(Arrays.asList(new File(environmentNameOrPath, "bin/python").getAbsolutePath()));
                         break;
                 }
                 break;
             case OTHER:
-                logger.error("Environment is unknown, please set the environment type to something different than 'Other'");
                 return null;
         }
-        // Because Arrays.asList returns an unmodifiable list, we change it here
         return cmd;
     }
 
@@ -116,15 +116,36 @@ public class VirtualEnvironmentRunner {
      */
     public void runCommand() throws IOException, InterruptedException {
         // Get how to start the command, based on the VENV Type
-        List<String> cmd = getStartCommand();
+        List<String> command = getActivationCommand();
 
         // Get the arguments specific to the command we want to run
-        cmd.addAll(arguments);
+        command.addAll(arguments);
 
-        logger.info("Executing command: {}", cmd.toString().replace(",", ""));
+        // OK so here we need to either just continue appending the commands in the case of windows
+        // or making a big string for NIX systems
+        List<String> shell = new ArrayList<>();
+
+        switch (Platform.getCurrent()) {
+
+            case UNIX:
+            case OSX:
+                shell.addAll(Arrays.asList("bash", "-c"));
+
+                String cmdString = command.toString().replace(",","");
+                shell.add(cmdString.substring(1, cmdString.length()-1));
+                break;
+
+            case WINDOWS:
+            default:
+                shell.addAll(Arrays.asList("cmd.exe", "/C"));
+                shell.addAll(command);
+                break;
+        }
+
+        logger.info("Executing command: {}", shell.toString().replace(",", ""));
 
         // Now the cmd line is ready
-        ProcessBuilder pb = new ProcessBuilder(cmd);
+        ProcessBuilder pb = new ProcessBuilder(shell);
 
         // Start the process and follow it throughout
         Process p = pb.start();
@@ -149,6 +170,6 @@ public class VirtualEnvironmentRunner {
 
         p.waitFor();
 
-        logger.info("Virtual Enviroment Runner Finished");
+        logger.info("Virtual Environment Runner Finished");
     }
 }

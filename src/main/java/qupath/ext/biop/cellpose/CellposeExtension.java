@@ -56,8 +56,8 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         // Add Permanent Preferences and Populate Preferences
         PreferencePane prefs = QuPathGUI.getInstance().getPreferencePane();
 
-        prefs.addDirectoryPropertyPreference(envPath, "Cellpose Environment Directory", "Cellpose",
-                "Choose directory where your chosen Cellpose virtual environment (conda or venv) is located.");
+        prefs.addPropertyPreference(envPath, String.class, "Cellpose Environment name or directory", "Cellpose",
+                "Enter either the directory where your chosen Cellpose virtual environment (conda or venv) is located. Or the name of the conda environment you created.");
         prefs.addChoicePropertyPreference(envType,
                 FXCollections.observableArrayList(VirtualEnvironmentRunner.EnvType.values()),
                 VirtualEnvironmentRunner.EnvType.class,"Cellpose Environment Type", "Cellpose",
