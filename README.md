@@ -25,7 +25,6 @@ Running Cellpose is done via a script and is very similar to the excellent [QuPa
 ```groovy
 import qupath.ext.biop.cellpose.Cellpose2D
 
-TODO
 // Specify the model name (cyto, nuc, cyto2 or a path to your custom model)
 def pathModel = 'cyto'
 
