@@ -12,6 +12,12 @@ The extension will then be copied to a location inside that directory.
 
 You might then need to restart QuPath (but not your computer).
 
+### first time setup
+Go to `Edit > Preferences > Cellpose`
+Complete the fields with the requested information
+The example below is from a full GPU enabled cellpose installation that was made [by following the instructions here](https://c4science.ch/w/bioimaging_and_optics_platform_biop/computers-servers/software/gpu-deep-learning/python-venv/#cellpose). 
+![image](https://user-images.githubusercontent.com/319932/137691866-2e15d4b5-526c-4360-9d1d-710bb285fd09.png)
+
 ## Installing Cellpose
 
 Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose).
