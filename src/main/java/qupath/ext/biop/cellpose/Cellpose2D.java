@@ -931,8 +931,6 @@ public class Cellpose2D {
         // Get options
         CellposeOptions cellposeOptions = CellposeOptions.getInstance();
 
-        // Set the arguments to run Cellpose
-
         // Create command to run
         VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeOptions.getEnvironmentNameorPath(), cellposeOptions.getEnvironmentType());
 

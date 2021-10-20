@@ -41,7 +41,6 @@ public class VirtualEnvironmentRunner {
         EnvType(String description, String help) {
             this.description = description;
             this.help = help;
-
         }
 
         public String getDescription() {return this.description;}
