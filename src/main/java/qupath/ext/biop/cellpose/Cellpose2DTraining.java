@@ -40,6 +40,7 @@ public class Cellpose2DTraining {
 
     private void saveImagePairs(List<PathObject> annotations, String imageName, ImageServer<BufferedImage> originalServer, ImageServer<BufferedImage> labelServer, File saveDirectory) {
 
+        if(annotations.isEmpty()) { return; }
         int downsample = 1;
         if (Double.isFinite(pixelSize) && pixelSize > 0) {
             downsample = (int) Math.round(pixelSize / originalServer.getPixelCalibration().getAveragedPixelSize().doubleValue());
@@ -47,6 +48,8 @@ public class Cellpose2DTraining {
 
         AtomicInteger idx = new AtomicInteger();
         int finalDownsample = downsample;
+
+        logger.info("Saving Images...");
         annotations.parallelStream().forEach(a -> {
             int i = idx.getAndIncrement();
 
@@ -93,7 +96,6 @@ public class Cellpose2DTraining {
                         .useFilter(o -> o.getPathClass() == null) // Keep only objects with no PathClass
                         .build();
 
-                logger.info("Saving Images...");
                 saveImagePairs(trainingAnnotations, imageName, processed, labelServer, trainDirectory);
                 saveImagePairs(validationAnnotations, imageName, processed, labelServer, valDirectory);
             } catch (Exception ex) {
