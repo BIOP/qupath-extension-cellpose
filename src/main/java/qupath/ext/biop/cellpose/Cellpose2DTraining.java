@@ -111,7 +111,7 @@ public class Cellpose2DTraining {
         File[] all = cellPoseModelFolder.listFiles();
         Optional<File> cellPoseModel = Arrays.stream(all).filter(f -> f.getName().contains("cellpose")).findFirst();
         if(cellPoseModel.isPresent()) {
-            logger.info("Found model file at {} ");
+            logger.info("Found model file at {} ", cellPoseModel);
             File model = cellPoseModel.get();
             File newModel = new File(modelDirectory, model.getName());
             FileUtils.copyFile(model, newModel);
