@@ -145,7 +145,8 @@ public class VirtualEnvironmentRunner {
 
         // Now the cmd line is ready
         ProcessBuilder pb = new ProcessBuilder(shell);
-
+        pb.redirectErrorStream();
+        
         // Start the process and follow it throughout
         Process p = pb.start();
 
