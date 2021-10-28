@@ -37,6 +37,7 @@ public class Cellpose2DTraining {
     private int nEpochs;
     private ImageDataOp op;
     private double pixelSize;
+    private boolean invert;
 
     private void saveImagePairs(List<PathObject> annotations, String imageName, ImageServer<BufferedImage> originalServer, ImageServer<BufferedImage> labelServer, File saveDirectory) {
 
@@ -134,6 +135,7 @@ public class Cellpose2DTraining {
         private double pixelSize = Double.NaN;
 
         private List<ImageOp> ops = new ArrayList<>();
+        private boolean isInvert;
 
         private Builder(String pretrainedModel) {
             this.pretrainedModel = pretrainedModel;
@@ -263,6 +265,11 @@ public class Cellpose2DTraining {
             return this;
         }
 
+        public Builder invertChannels( boolean isInvert ) {
+            this.isInvert = isInvert;
+            return this;
+        }
+
         /**
          * Create a {@link Cellpose2D}, all ready for detection.
          *
@@ -313,6 +320,7 @@ public class Cellpose2DTraining {
             cellpose.nChannels = channels.length;
             cellpose.pixelSize = pixelSize;
             cellpose.diameter = diameter;
+            cellpose.invert = isInvert;
             cellpose.nEpochs = nEpochs;
             cellpose.trainDirectory = trainDirectory;
             cellpose.valDirectory = valDirectory;
@@ -366,19 +374,25 @@ public class Cellpose2DTraining {
         }
 
         // The channel order will always be 1 and 2, in the order defined by channels(...) in the builder
-        cellposeArguments.add("--chan");
-        cellposeArguments.add("1");
-
         if (nChannels > 1) {
+            cellposeArguments.add("--chan");
+            cellposeArguments.add("1");
+
             cellposeArguments.add("--chan2");
             cellposeArguments.add("2");
+        } else {
+            cellposeArguments.add("--chan");
+            cellposeArguments.add("0");
         }
+
 
         cellposeArguments.add("--diameter");
         cellposeArguments.add("" + diameter);
 
         cellposeArguments.add("--n_epochs");
         cellposeArguments.add("" + nEpochs);
+
+        if(invert) cellposeArguments.add("--invert");
 
         if (cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
 

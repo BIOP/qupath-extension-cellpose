@@ -965,6 +965,7 @@ public class Cellpose2D {
         cellposeArguments.add("--save_tif");
 
         cellposeArguments.add("--no_npy");
+        cellposeArguments.add("--resample");
 
         if(cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
 
