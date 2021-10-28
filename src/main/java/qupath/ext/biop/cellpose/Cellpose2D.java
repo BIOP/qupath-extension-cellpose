@@ -82,7 +82,6 @@ public class Cellpose2D {
     private final static Logger logger = LoggerFactory.getLogger(Cellpose2D.class);
     private int channel1;
     private int channel2;
-    private int nChannels;
     private double iouThreshold = 0.1;
     private double simplifyDistance = 1.4;
     private double probabilityThreshold;
@@ -104,6 +103,7 @@ public class Cellpose2D {
     private boolean measureShape = false;
     private Collection<ObjectMeasurements.Compartments> compartments;
     private Collection<ObjectMeasurements.Measurements> measurements;
+    private boolean invert;
 
     /**
      * Create a builder to customize detection parameters.
@@ -111,7 +111,7 @@ public class Cellpose2D {
      * or a path to a custom model (as a String)
      *
      * @param modelPath name or path to model to use for prediction.
-     * @return
+     * @return this builder
      */
     public static Builder builder(String modelPath) {
         return new Builder(modelPath);
@@ -198,8 +198,7 @@ public class Cellpose2D {
                         // Make a new RegionRequest
                         var region = RegionRequest.createInstance(server.getPath(), finalDownsample, t);
                         try {
-                            TileFile file = saveTileImage(op, imageData, region);
-                            return file;
+                            return saveTileImage(op, imageData, region);
                         } catch (IOException e) {
                             e.printStackTrace();
                         }
@@ -212,9 +211,7 @@ public class Cellpose2D {
         // Here the files are saved, and we can run cellpose.
         try {
             runCellPose();
-        } catch (IOException e) {
-            logger.error("Failed to Run Cellpose", e);
-        } catch (InterruptedException e) {
+        } catch (IOException | InterruptedException e) {
             logger.error("Failed to Run Cellpose", e);
         }
 
@@ -222,7 +219,7 @@ public class Cellpose2D {
         allTiles.parallelStream().forEach(tileMap -> {
             PathObject parent = tileMap.getObject();
             // Read each image
-            List<PathObject> allDetections = Collections.synchronizedList(new ArrayList<PathObject>());
+            List<PathObject> allDetections = Collections.synchronizedList(new ArrayList<>());
             tileMap.getTileFiles().parallelStream().forEach(tilefile -> {
                 File ori = tilefile.getFile();
                 File maskFile = new File(ori.getParent(), FilenameUtils.removeExtension(ori.getName()) + "_cp_masks.tif");
@@ -260,7 +257,7 @@ public class Cellpose2D {
                             logger.warn("Error converting to object: " + e.getLocalizedMessage(), e);
                             return null;
                         }
-                    }).filter(n -> n != null)
+                    }).filter(Objects::nonNull)
                     .collect(Collectors.toList());
 
             // Resolve cell overlaps, if needed
@@ -268,7 +265,7 @@ public class Cellpose2D {
                 logger.info("Resolving cell overlaps for {}", parent);
                 if (creatorFun != null) {
                     // It's awkward, but we need to temporarily convert to cells and back
-                    var cells = filteredDetections.stream().map(c -> objectToCell(c)).collect(Collectors.toList());
+                    var cells = filteredDetections.stream().map(Cellpose2D::objectToCell).collect(Collectors.toList());
                     cells = CellTools.constrainCellOverlaps(cells);
                     filteredDetections = cells.stream().map(c -> cellToObject(c, creatorFun)).collect(Collectors.toList());
                 } else
@@ -368,7 +365,7 @@ public class Cellpose2D {
     private List<PathObject> filterDetections(List<PathObject> rawDetections) {
 
         // Sort by size
-        Collections.sort(rawDetections, Comparator.comparingDouble(o -> -1 * o.getROI().getArea()));
+        rawDetections.sort(Comparator.comparingDouble(o -> -1 * o.getROI().getArea()));
 
         // Create array of detections to keep & to skip
         var detections = new LinkedHashSet<PathObject>();
@@ -430,7 +427,7 @@ public class Cellpose2D {
      * @param imageData the current ImageData
      * @param request   the region we want to save
      * @return a simple object that contains the request and the associated file in the temp folder
-     * @throws IOException
+     * @throws IOException an error in case of read/write issue
      */
     private TileFile saveTileImage(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request) throws IOException {
 
@@ -479,9 +476,8 @@ public class Cellpose2D {
         VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeOptions.getEnvironmentNameorPath(), cellposeOptions.getEnvironmentType());
 
         // This is the list of commands after the 'python' call
-        List<String> cellposeArguments = new ArrayList<>();
 
-        cellposeArguments.addAll(Arrays.asList("-W", "ignore", "-m", "cellpose"));
+        List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-W", "ignore", "-m", "cellpose"));
 
         cellposeArguments.add("--dir");
         cellposeArguments.add("" + this.cellposeTempFolder);
@@ -507,7 +503,11 @@ public class Cellpose2D {
         cellposeArguments.add("--save_tif");
 
         cellposeArguments.add("--no_npy");
+
         cellposeArguments.add("--resample");
+
+        if (invert) cellposeArguments.add("--invert");
+
 
         if (cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
 
@@ -524,7 +524,7 @@ public class Cellpose2D {
      */
     public static class Builder {
 
-        private String modelPath;
+        private final String modelPath;
         private ColorTransform[] channels = new ColorTransform[0];
 
         private double probabilityThreshold = 0.5;
@@ -538,8 +538,8 @@ public class Cellpose2D {
 
         private double pixelSize = Double.NaN;
 
-        private int tileWidth = 2048;
-        private int tileHeight = 2048;
+        private int tileWidth = 1024;
+        private int tileHeight = 1024;
 
         private Function<ROI, PathObject> creatorFun;
 
@@ -551,11 +551,12 @@ public class Cellpose2D {
 
         private boolean constrainToParent = true;
 
-        private List<ImageOp> ops = new ArrayList<>();
+        private final List<ImageOp> ops = new ArrayList<>();
         private double iouThreshold = 0.1;
 
         private int channel1 = 0; //GRAY
         private int channel2 = 0; // NONE
+        private boolean isInvert = false;
 
 
         private Builder(String modelPath) {
@@ -566,7 +567,7 @@ public class Cellpose2D {
         /**
          * Probability threshold to apply for detection, between 0 and 1.
          *
-         * @param threshold
+         * @param threshold probability threshold between 0 and 1 (default 0.5)
          * @return this builder
          */
         public Builder probabilityThreshold(double threshold) {
@@ -577,7 +578,7 @@ public class Cellpose2D {
         /**
          * Flow threshold to apply for detection, between 0 and 1.
          *
-         * @param threshold
+         * @param threshold flow threshold (default 0.0)
          * @return this builder
          */
         public Builder flowThreshold(double threshold) {
@@ -590,7 +591,7 @@ public class Cellpose2D {
          * their expected diameter
          *
          * @param diameter in pixels
-         * @return
+         * @return this builder
          */
         public Builder diameter(double diameter) {
             this.diameter = diameter;
@@ -600,12 +601,11 @@ public class Cellpose2D {
         /**
          * Add preprocessing operations, if required.
          *
-         * @param ops
+         * @param ops series of ImageOps to apply to this server before saving the images
          * @return this builder
          */
         public Builder preprocess(ImageOp... ops) {
-            for (var op : ops)
-                this.ops.add(op);
+            Collections.addAll(this.ops, ops);
             return this;
         }
 
@@ -648,7 +648,7 @@ public class Cellpose2D {
          */
         public Builder channels(int... channels) {
             return channels(Arrays.stream(channels)
-                    .mapToObj(c -> ColorTransforms.createChannelExtractor(c))
+                    .mapToObj(ColorTransforms::createChannelExtractor)
                     .toArray(ColorTransform[]::new));
         }
 
@@ -662,7 +662,7 @@ public class Cellpose2D {
          */
         public Builder channels(String... channels) {
             return channels(Arrays.stream(channels)
-                    .map(c -> ColorTransforms.createChannelExtractor(c))
+                    .map(ColorTransforms::createChannelExtractor)
                     .toArray(ColorTransform[]::new));
         }
 
@@ -671,7 +671,7 @@ public class Cellpose2D {
          * <p>
          * This makes it possible to supply color deconvolved channels, for example.
          *
-         * @param channels
+         * @param channels ColorTransform channels to use, typically only used internally
          * @return this builder
          */
         public Builder channels(ColorTransform... channels) {
@@ -692,7 +692,7 @@ public class Cellpose2D {
          * <p>
          * In short, be wary.
          *
-         * @param distance
+         * @param distance cell expansion distance in microns
          * @return this builder
          */
         public Builder cellExpansion(double distance) {
@@ -705,7 +705,7 @@ public class Cellpose2D {
          * the nucleus size. Only meaningful for values &gt; 1; the nucleus is expanded according
          * to the scale factor, and used to define the maximum permitted cell expansion.
          *
-         * @param scale
+         * @param scale a number to multiply each pixel in the image by
          * @return this builder
          */
         public Builder cellConstrainScale(double scale) {
@@ -720,14 +720,14 @@ public class Cellpose2D {
          * @return this builder
          */
         public Builder createAnnotations() {
-            this.creatorFun = r -> PathObjects.createAnnotationObject(r);
+            this.creatorFun = PathObjects::createAnnotationObject;
             return this;
         }
 
         /**
          * Request that a classification is applied to all created objects.
          *
-         * @param pathClass
+         * @param pathClass the PathClass of all detections resulting from this run
          * @return this builder
          */
         public Builder classify(PathClass pathClass) {
@@ -739,7 +739,7 @@ public class Cellpose2D {
          * Request that a classification is applied to all created objects.
          * This is a convenience method that get a {@link PathClass} from  {@link PathClassFactory}.
          *
-         * @param pathClassName
+         * @param pathClassName the name of the PathClass for all detections
          * @return this builder
          */
         public Builder classify(String pathClassName) {
@@ -749,7 +749,7 @@ public class Cellpose2D {
         /**
          * If true, ignore overlaps when computing cell expansion.
          *
-         * @param ignore
+         * @param ignore ignore overlaps when computing cell expansion.
          * @return this builder
          */
         public Builder ignoreCellOverlaps(boolean ignore) {
@@ -760,7 +760,7 @@ public class Cellpose2D {
         /**
          * If true, constrain nuclei and cells to any parent annotation (default is true).
          *
-         * @param constrainToParent
+         * @param constrainToParent constrain nuclei and cells to any parent annotation
          * @return this builder
          */
         public Builder constrainToParent(boolean constrainToParent) {
@@ -824,7 +824,7 @@ public class Cellpose2D {
          * <p>
          * For an image calibrated in microns, the recommended default is approximately 0.5.
          *
-         * @param pixelSize
+         * @param pixelSize Pixel size in microns for the analysis
          * @return this builder
          */
         public Builder pixelSize(double pixelSize) {
@@ -837,7 +837,7 @@ public class Cellpose2D {
          * Note that tiles are independently normalized, and therefore tiling can impact
          * the results. Default is 1024.
          *
-         * @param tileSize
+         * @param tileSize if the regions must be broken down, how large should the tiles be, in pixels (width and height)
          * @return this builder
          */
         public Builder tileSize(int tileSize) {
@@ -849,8 +849,8 @@ public class Cellpose2D {
          * Note that tiles are independently normalized, and therefore tiling can impact
          * the results. Default is 1024.
          *
-         * @param tileWidth
-         * @param tileHeight
+         * @param tileWidth if the regions must be broken down, how large should the tiles be (width), in pixels
+         * @param tileHeight if the regions must be broken down, how large should the tiles be (height), in pixels
          * @return this builder
          */
         public Builder tileSize(int tileWidth, int tileHeight) {
@@ -912,7 +912,12 @@ public class Cellpose2D {
             return this;
         }
 
-        public Builder cellPoseChannels(int channel1, int channel2) {
+        public Builder invertChannels(boolean isInvert) {
+            this.isInvert = isInvert;
+            return this;
+        }
+
+        public Builder cellposeChannels(int channel1, int channel2) {
             this.channel1 = channel1;
             this.channel2 = channel2;
             return this;
@@ -921,7 +926,7 @@ public class Cellpose2D {
         /**
          * Create a {@link Cellpose2D}, all ready for detection.
          *
-         * @return
+         * @return a CellPose2D object, ready to be run
          */
         public Cellpose2D build() {
 
@@ -950,13 +955,13 @@ public class Cellpose2D {
             cellpose.op = ImageOps.buildImageDataOp(channels).appendOps(mergedOps.toArray(ImageOp[]::new));
 
             // CellPose accepts either one or two channels. This will help the final command
-            cellpose.nChannels = channels.length;
             cellpose.channel1 = channel1;
             cellpose.channel2 = channel2;
             cellpose.probabilityThreshold = probabilityThreshold;
             cellpose.flowThreshold = flowThreshold;
             cellpose.pixelSize = pixelSize;
             cellpose.diameter = diameter;
+            cellpose.invert = isInvert;
 
             // Overlap for segmentation of tiles. Should be large enough that any object must be "complete"
             // in at least one tile for resolving overlaps

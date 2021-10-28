@@ -33,7 +33,8 @@ public class Cellpose2DTraining {
     private File trainDirectory;
     private File valDirectory;
     private double diameter;
-    private int nChannels;
+    private int channel1;
+    private int channel2;
     private int nEpochs;
     private ImageDataOp op;
     private double pixelSize;
@@ -41,7 +42,9 @@ public class Cellpose2DTraining {
 
     private void saveImagePairs(List<PathObject> annotations, String imageName, ImageServer<BufferedImage> originalServer, ImageServer<BufferedImage> labelServer, File saveDirectory) {
 
-        if(annotations.isEmpty()) { return; }
+        if (annotations.isEmpty()) {
+            return;
+        }
         int downsample = 1;
         if (Double.isFinite(pixelSize) && pixelSize > 0) {
             downsample = (int) Math.round(pixelSize / originalServer.getPixelCalibration().getAveragedPixelSize().doubleValue());
@@ -73,9 +76,9 @@ public class Cellpose2DTraining {
         Project<BufferedImage> project = QP.getProject();
         // Prepare location to save images
 
-        project.getImageList().stream().forEach(e -> {
+        project.getImageList().parallelStream().forEach(e -> {
 
-            ImageData<BufferedImage> imageData = null;
+            ImageData<BufferedImage> imageData;
             try {
                 imageData = e.readImageData();
                 String imageName = GeneralTools.getNameWithoutExtension(imageData.getServer().getMetadata().getName());
@@ -100,7 +103,7 @@ public class Cellpose2DTraining {
                 saveImagePairs(trainingAnnotations, imageName, processed, labelServer, trainDirectory);
                 saveImagePairs(validationAnnotations, imageName, processed, labelServer, valDirectory);
             } catch (Exception ex) {
-                logger.error( ex.getMessage());
+                logger.error(ex.getMessage());
             }
         });
 
@@ -111,7 +114,7 @@ public class Cellpose2DTraining {
         // Find the first file in there
         File[] all = cellPoseModelFolder.listFiles();
         Optional<File> cellPoseModel = Arrays.stream(all).filter(f -> f.getName().contains("cellpose")).findFirst();
-        if(cellPoseModel.isPresent()) {
+        if (cellPoseModel.isPresent()) {
             logger.info("Found model file at {} ", cellPoseModel);
             File model = cellPoseModel.get();
             File newModel = new File(modelDirectory, model.getName());
@@ -120,6 +123,72 @@ public class Cellpose2DTraining {
         }
         return null;
     }
+
+    public File train() {
+
+        try {
+            saveTrainingImages();
+            runCellPose();
+            return moveAndReturnModelFile();
+
+        } catch (IOException | InterruptedException e) {
+            logger.error(e.getMessage(), e);
+        }
+        return null;
+
+    }
+
+    public void runCellPose() throws IOException, InterruptedException {
+
+        //python -m cellpose --train --dir ~/images_cyto/train/ --test_dir ~/images_cyto/test/ --pretrained_model cyto --chan 2 --chan2 1
+        // Get options
+        CellposeOptions cellposeOptions = CellposeOptions.getInstance();
+
+        // Create command to run
+        VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeOptions.getEnvironmentNameorPath(), cellposeOptions.getEnvironmentType());
+
+        // This is the list of commands after the 'python' call
+
+        List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-W", "ignore", "-m", "cellpose"));
+
+        cellposeArguments.add("--train");
+
+        cellposeArguments.add("--dir");
+        cellposeArguments.add("" + trainDirectory.getAbsolutePath());
+        cellposeArguments.add("--test_dir");
+        cellposeArguments.add("" + valDirectory.getAbsolutePath());
+
+        cellposeArguments.add("--pretrained_model");
+        if (!Objects.equals(pretrainedModel, "")) {
+            cellposeArguments.add("" + pretrainedModel);
+        } else {
+            cellposeArguments.add("None");
+        }
+
+        // The channel order will always be 1 and 2, in the order defined by channels(...) in the builder
+        cellposeArguments.add("--chan");
+        cellposeArguments.add("" + channel1);
+        cellposeArguments.add("--chan2");
+        cellposeArguments.add("" + channel2);
+
+        cellposeArguments.add("--diameter");
+        cellposeArguments.add("" + diameter);
+
+        cellposeArguments.add("--n_epochs");
+        cellposeArguments.add("" + nEpochs);
+
+        if (invert) cellposeArguments.add("--invert");
+
+        if (cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
+
+        veRunner.setArguments(cellposeArguments);
+
+        // Finally, we can run Cellpose
+        veRunner.runCommand();
+
+        logger.info("Cellpose command finished running");
+    }
+
     /**
      * Builder to help create a {@link Cellpose2D} with custom parameters.
      */
@@ -127,14 +196,16 @@ public class Cellpose2DTraining {
 
         private File modelDirectory;
         private ColorTransforms.ColorTransform[] channels = new ColorTransforms.ColorTransform[0];
-        private String pretrainedModel = "cyto";
+        private String pretrainedModel;
 
         private double diameter = 100;
         private int nEpochs;
+        private int channel1 = 0; //GRAY
+        private int channel2 = 0; // NONE
 
         private double pixelSize = Double.NaN;
 
-        private List<ImageOp> ops = new ArrayList<>();
+        private final List<ImageOp> ops = new ArrayList<>();
         private boolean isInvert;
 
         private Builder(String pretrainedModel) {
@@ -142,7 +213,7 @@ public class Cellpose2DTraining {
             this.ops.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
         }
 
-        Builder modelDirectory( File modelDirectory) {
+        Builder modelDirectory(File modelDirectory) {
             this.modelDirectory = modelDirectory;
             return this;
         }
@@ -157,7 +228,7 @@ public class Cellpose2DTraining {
          * their expected diameter
          *
          * @param diameter in pixels
-         * @return
+         * @return this builder
          */
         public Builder diameter(double diameter) {
             this.diameter = diameter;
@@ -167,12 +238,11 @@ public class Cellpose2DTraining {
         /**
          * Add preprocessing operations, if required.
          *
-         * @param ops
+         * @param ops ImageOps to preprocess the image
          * @return this builder
          */
         public Builder preprocess(ImageOp... ops) {
-            for (var op : ops)
-                this.ops.add(op);
+            Collections.addAll(this.ops, ops);
             return this;
         }
 
@@ -186,7 +256,7 @@ public class Cellpose2DTraining {
          */
         public Builder channels(int... channels) {
             return channels(Arrays.stream(channels)
-                    .mapToObj(c -> ColorTransforms.createChannelExtractor(c))
+                    .mapToObj(ColorTransforms::createChannelExtractor)
                     .toArray(ColorTransforms.ColorTransform[]::new));
         }
 
@@ -200,7 +270,7 @@ public class Cellpose2DTraining {
          */
         public Builder channels(String... channels) {
             return channels(Arrays.stream(channels)
-                    .map(c -> ColorTransforms.createChannelExtractor(c))
+                    .map(ColorTransforms::createChannelExtractor)
                     .toArray(ColorTransforms.ColorTransform[]::new));
         }
 
@@ -209,7 +279,7 @@ public class Cellpose2DTraining {
          * <p>
          * This makes it possible to supply color deconvolved channels, for example.
          *
-         * @param channels
+         * @param channels the ColorTransform channels we want. Mostly used internally
          * @return this builder
          */
         public Builder channels(ColorTransforms.ColorTransform... channels) {
@@ -225,7 +295,7 @@ public class Cellpose2DTraining {
          * <p>
          * For an image calibrated in microns, the recommended default is approximately 0.5.
          *
-         * @param pixelSize
+         * @param pixelSize the requested pixel size in microns
          * @return this builder
          */
         public Builder pixelSize(double pixelSize) {
@@ -265,20 +335,26 @@ public class Cellpose2DTraining {
             return this;
         }
 
-        public Builder invertChannels( boolean isInvert ) {
+        public Builder invertChannels(boolean isInvert) {
             this.isInvert = isInvert;
+            return this;
+        }
+
+        public Builder cellposeChannels(int channel1, int channel2) {
+            this.channel1 = channel1;
+            this.channel2 = channel2;
             return this;
         }
 
         /**
          * Create a {@link Cellpose2D}, all ready for detection.
          *
-         * @return
+         * @return a Cellpose2DTraining object, ready to be run
          */
         public Cellpose2DTraining build() {
 
             // Directory to move trained models.
-            if( modelDirectory == null) {
+            if (modelDirectory == null) {
                 modelDirectory = new File(QP.getProject().getPath().getParent().toFile(), "models");
             }
 
@@ -313,11 +389,12 @@ public class Cellpose2DTraining {
             }
             mergedOps.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
 
-            cellpose.op =  ImageOps.buildImageDataOp(channels)
+            cellpose.op = ImageOps.buildImageDataOp(channels)
                     .appendOps(mergedOps.toArray(ImageOp[]::new));
 
             // CellPose accepts either one or two channels. This will help the final command
-            cellpose.nChannels = channels.length;
+            cellpose.channel1 = channel1;
+            cellpose.channel2 = channel2;
             cellpose.pixelSize = pixelSize;
             cellpose.diameter = diameter;
             cellpose.invert = isInvert;
@@ -329,78 +406,5 @@ public class Cellpose2DTraining {
             return cellpose;
         }
 
-    }
-
-    public File train() {
-
-        try {
-            saveTrainingImages();
-            runCellPose();
-            File model = moveAndReturnModelFile();
-
-            return model;
-        } catch (IOException | InterruptedException e) {
-            logger.error(e.getMessage(), e);
-        }
-        return null;
-
-    }
-    public void runCellPose() throws IOException, InterruptedException {
-
-        //python -m cellpose --train --dir ~/images_cyto/train/ --test_dir ~/images_cyto/test/ --pretrained_model cyto --chan 2 --chan2 1
-        // Get options
-        CellposeOptions cellposeOptions = CellposeOptions.getInstance();
-
-        // Create command to run
-        VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeOptions.getEnvironmentNameorPath(), cellposeOptions.getEnvironmentType());
-
-        // This is the list of commands after the 'python' call
-        List<String> cellposeArguments = new ArrayList<>();
-
-        cellposeArguments.addAll(Arrays.asList("-W", "ignore", "-m", "cellpose"));
-
-        cellposeArguments.add("--train");
-
-        cellposeArguments.add("--dir");
-        cellposeArguments.add("" + trainDirectory.getAbsolutePath());
-        cellposeArguments.add("--test_dir");
-        cellposeArguments.add("" + valDirectory.getAbsolutePath());
-
-        cellposeArguments.add("--pretrained_model");
-        if(pretrainedModel != "") {
-            cellposeArguments.add("" + pretrainedModel);
-        } else {
-            cellposeArguments.add("None");
-        }
-
-        // The channel order will always be 1 and 2, in the order defined by channels(...) in the builder
-        if (nChannels > 1) {
-            cellposeArguments.add("--chan");
-            cellposeArguments.add("1");
-
-            cellposeArguments.add("--chan2");
-            cellposeArguments.add("2");
-        } else {
-            cellposeArguments.add("--chan");
-            cellposeArguments.add("0");
-        }
-
-
-        cellposeArguments.add("--diameter");
-        cellposeArguments.add("" + diameter);
-
-        cellposeArguments.add("--n_epochs");
-        cellposeArguments.add("" + nEpochs);
-
-        if(invert) cellposeArguments.add("--invert");
-
-        if (cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
-
-        veRunner.setArguments(cellposeArguments);
-
-        // Finally, we can run Cellpose
-        veRunner.runCommand();
-
-        logger.info("Cellpose command finished running");
     }
 }
