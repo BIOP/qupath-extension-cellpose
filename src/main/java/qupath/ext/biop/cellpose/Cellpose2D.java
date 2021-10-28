@@ -18,7 +18,6 @@ package qupath.ext.biop.cellpose;
 
 import ij.IJ;
 import ij.ImagePlus;
-
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.bytedeco.opencv.opencv_core.Mat;
@@ -56,7 +55,8 @@ import qupath.opencv.ops.ImageOps;
 import qupath.opencv.tools.OpenCVTools;
 
 import java.awt.image.BufferedImage;
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -75,12 +75,449 @@ import java.util.stream.Collectors;
  * This way the Cellpose builder mirrors the StarDist2D builder, which should allow users familiar with the StarDist extension to use this one
  * <p>
  *
- *
  * @author Olivier Burri (this implementation, but based on the others)
  */
 public class Cellpose2D {
 
     private final static Logger logger = LoggerFactory.getLogger(Cellpose2D.class);
+    private int channel1;
+    private int channel2;
+    private int nChannels;
+    private double iouThreshold = 0.1;
+    private double simplifyDistance = 1.4;
+    private double probabilityThreshold;
+    private double flowThreshold;
+    private File cellposeTempFolder;
+    private String model;
+    private double diameter;
+    private ImageDataOp op;
+    private double pixelSize;
+    private double cellExpansion;
+    private double cellConstrainScale;
+    private boolean ignoreCellOverlaps;
+    private Function<ROI, PathObject> creatorFun;
+    private PathClass globalPathClass;
+    private boolean constrainToParent = true;
+    private int tileWidth = 1024;
+    private int tileHeight = 1024;
+    private int overlap;
+    private boolean measureShape = false;
+    private Collection<ObjectMeasurements.Compartments> compartments;
+    private Collection<ObjectMeasurements.Measurements> measurements;
+
+    /**
+     * Create a builder to customize detection parameters.
+     * This accepts either Text describing the built-in models from cellpose (cyto, cyto2, nuc)
+     * or a path to a custom model (as a String)
+     *
+     * @param modelPath name or path to model to use for prediction.
+     * @return
+     */
+    public static Builder builder(String modelPath) {
+        return new Builder(modelPath);
+    }
+
+    // Convenience method to convert a PathObject to cells, taken verbatim from StarDist2D
+    private static PathObject objectToCell(PathObject pathObject) {
+        ROI roiNucleus = null;
+        var children = pathObject.getChildObjects();
+        if (children.size() == 1)
+            roiNucleus = children.iterator().next().getROI();
+        else if (children.size() > 1)
+            throw new IllegalArgumentException("Cannot convert object with multiple child objects to a cell!");
+        return PathObjects.createCellObject(pathObject.getROI(), roiNucleus, pathObject.getPathClass(), pathObject.getMeasurementList());
+    }
+
+    private static PathObject cellToObject(PathObject cell, Function<ROI, PathObject> creator) {
+        var parent = creator.apply(cell.getROI());
+        var nucleusROI = cell instanceof PathCellObject ? ((PathCellObject) cell).getNucleusROI() : null;
+        if (nucleusROI != null) {
+            var nucleus = creator.apply(nucleusROI);
+            nucleus.setPathClass(cell.getPathClass());
+            parent.addPathObject(nucleus);
+        }
+        parent.setPathClass(cell.getPathClass());
+        var cellMeasurements = cell.getMeasurementList();
+        if (!cellMeasurements.isEmpty()) {
+            try (var ml = parent.getMeasurementList()) {
+                for (int i = 0; i < cellMeasurements.size(); i++)
+                    ml.addMeasurement(cellMeasurements.getMeasurementName(i), cellMeasurements.getMeasurementValue(i));
+            }
+        }
+        return parent;
+    }
+
+    /**
+     * Detect cells within one or more parent objects, firing update events upon completion.
+     *
+     * @param imageData the image data containing the object
+     * @param parents   the parent objects; existing child objects will be removed, and replaced by the detected cells
+     */
+    public void detectObjects(ImageData<BufferedImage> imageData, Collection<? extends PathObject> parents) {
+        //runInPool(() -> detectObjectsImpl(imageData, parents));
+        // Multi step process
+        // 1. Extract all images and save to temp folder
+        // 2. Run Cellpose on folder
+        // 3. Pick up Label images and convert to PathObjects
+
+        // Define temporary folder to work in
+        cellposeTempFolder = new File(QP.buildFilePath(QP.PROJECT_BASE_DIR, "cellpose-temp"));
+        cellposeTempFolder.mkdirs();
+
+        try {
+            FileUtils.cleanDirectory(cellposeTempFolder);
+        } catch (IOException e) {
+            logger.error("Could not clean temp directory {}", cellposeTempFolder);
+            logger.error("Message: ", e);
+        }
+
+        // Get downsample factor
+        int downsample = 1;
+        if (Double.isFinite(pixelSize) && pixelSize > 0) {
+            downsample = (int) Math.round(pixelSize / imageData.getServer().getPixelCalibration().getAveragedPixelSize().doubleValue());
+        }
+
+        ImageServer<BufferedImage> server = imageData.getServer();
+        PixelCalibration cal = server.getPixelCalibration();
+
+        double expansion = cellExpansion / cal.getAveragedPixelSize().doubleValue();
+
+        final int finalDownsample = downsample;
+
+        List<PathTile> allTiles = parents.parallelStream().map(parent -> {
+
+            // Get for each annotation the individual overlapping tiles
+            Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileWidth * finalDownsample), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileHeight * finalDownsample), true, overlap);
+
+            // Keep a reference to the images here while they are being saved
+            logger.info("Saving images for {} tiles", rois.size());
+
+            // Save each tile to an image and keep a reference to it
+            var individualTiles = rois.parallelStream()
+                    .map(t -> {
+                        // Make a new RegionRequest
+                        var region = RegionRequest.createInstance(server.getPath(), finalDownsample, t);
+                        try {
+                            TileFile file = saveTileImage(op, imageData, region);
+                            return file;
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                        return null;
+                    })
+                    .collect(Collectors.toList());
+            return new PathTile(parent, individualTiles);
+        }).collect(Collectors.toList());
+
+        // Here the files are saved, and we can run cellpose.
+        try {
+            runCellPose();
+        } catch (IOException e) {
+            logger.error("Failed to Run Cellpose", e);
+        } catch (InterruptedException e) {
+            logger.error("Failed to Run Cellpose", e);
+        }
+
+        // Recover all the images from CellPose to get the masks
+        allTiles.parallelStream().forEach(tileMap -> {
+            PathObject parent = tileMap.getObject();
+            // Read each image
+            List<PathObject> allDetections = Collections.synchronizedList(new ArrayList<PathObject>());
+            tileMap.getTileFiles().parallelStream().forEach(tilefile -> {
+                File ori = tilefile.getFile();
+                File maskFile = new File(ori.getParent(), FilenameUtils.removeExtension(ori.getName()) + "_cp_masks.tif");
+                if (maskFile.exists()) {
+                    try {
+                        logger.info("Getting objects for {}", maskFile);
+
+                        // thank you Pete for the ContourTracing Class
+                        List<PathObject> detections = ContourTracing.labelsToDetections(maskFile.toPath(), tilefile.getTile());
+
+                        //simplify them
+                        detections = detections.parallelStream().map(d -> PathObjects.createDetectionObject(GeometryTools.geometryToROI(simplify(d.getROI().getGeometry()), d.getROI().getImagePlane()), d.getPathClass())).collect(Collectors.toList());
+
+                        allDetections.addAll(detections);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+            });
+
+            // Filter Detections: Remove overlaps
+            List<PathObject> filteredDetections = filterDetections(allDetections);
+
+            // Remove the detections that are not contained within the parent
+            Geometry mask = parent.getROI().getGeometry();
+            filteredDetections = filteredDetections.stream().filter(t -> mask.covers(t.getROI().getGeometry())).collect(Collectors.toList());
+
+            // Convert to detections, dilating to approximate cells if necessary
+            // Drop cells if they fail (rather than catastrophically give up)
+            filteredDetections = filteredDetections.parallelStream()
+                    .map(n -> {
+                        try {
+                            return convertToObject(n, n.getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
+                        } catch (Exception e) {
+                            logger.warn("Error converting to object: " + e.getLocalizedMessage(), e);
+                            return null;
+                        }
+                    }).filter(n -> n != null)
+                    .collect(Collectors.toList());
+
+            // Resolve cell overlaps, if needed
+            if (expansion > 0 && !ignoreCellOverlaps) {
+                logger.info("Resolving cell overlaps for {}", parent);
+                if (creatorFun != null) {
+                    // It's awkward, but we need to temporarily convert to cells and back
+                    var cells = filteredDetections.stream().map(c -> objectToCell(c)).collect(Collectors.toList());
+                    cells = CellTools.constrainCellOverlaps(cells);
+                    filteredDetections = cells.stream().map(c -> cellToObject(c, creatorFun)).collect(Collectors.toList());
+                } else
+                    filteredDetections = CellTools.constrainCellOverlaps(filteredDetections);
+            }
+
+            // Add measurements
+            if (measureShape)
+                filteredDetections.parallelStream().forEach(c -> ObjectMeasurements.addShapeMeasurements(c, cal));
+
+            // Add intensity measurements, if needed
+            if (!filteredDetections.isEmpty() && !measurements.isEmpty()) {
+                logger.info("Making measurements for {}", parent);
+                var stains = imageData.getColorDeconvolutionStains();
+                var builder = new TransformedServerBuilder(server);
+                if (stains != null) {
+                    List<Integer> stainNumbers = new ArrayList<>();
+                    for (int s = 1; s <= 3; s++) {
+                        if (!stains.getStain(s).isResidual())
+                            stainNumbers.add(s);
+                    }
+                    builder.deconvolveStains(stains, stainNumbers.stream().mapToInt(i -> i).toArray());
+                }
+
+                var server2 = builder.build();
+
+                filteredDetections.parallelStream().forEach(cell -> {
+                    try {
+                        ObjectMeasurements.addIntensityMeasurements(server2, cell, finalDownsample, measurements, compartments);
+                    } catch (IOException e) {
+                        logger.error(e.getLocalizedMessage(), e);
+                    }
+                });
+            }
+
+            // Assign the objects to the parent object
+            parent.setLocked(true);
+            parent.clearPathObjects();
+            tileMap.getObject().addPathObjects(filteredDetections);
+        });
+
+        // Update the hierarchy
+        imageData.getHierarchy().fireHierarchyChangedEvent(this);
+
+    }
+
+    private PathObject convertToObject(PathObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
+        var geomNucleus = simplify(object.getROI().getGeometry());
+        PathObject pathObject;
+        if (cellExpansion > 0) {
+            var geomCell = CellTools.estimateCellBoundary(geomNucleus, cellExpansion, cellConstrainScale);
+            if (mask != null)
+                geomCell = GeometryTools.attemptOperation(geomCell, g -> g.intersection(mask));
+            geomCell = simplify(geomCell);
+
+            if (geomCell.isEmpty()) {
+                logger.warn("Empty cell boundary at {} will be skipped", object.getROI().getGeometry().getCentroid());
+                return null;
+            }
+
+            var roiCell = GeometryTools.geometryToROI(geomCell, plane);
+            var roiNucleus = GeometryTools.geometryToROI(geomNucleus, plane);
+            if (creatorFun == null)
+                pathObject = PathObjects.createCellObject(roiCell, roiNucleus, null, null);
+            else {
+                pathObject = creatorFun.apply(roiCell);
+                if (roiNucleus != null) {
+                    pathObject.addPathObject(creatorFun.apply(roiNucleus));
+                }
+            }
+        } else {
+            if (mask != null) {
+                geomNucleus = GeometryTools.attemptOperation(geomNucleus, g -> g.intersection(mask));
+            }
+            var roiNucleus = GeometryTools.geometryToROI(geomNucleus, plane);
+            if (creatorFun == null)
+                pathObject = PathObjects.createDetectionObject(roiNucleus);
+            else
+                pathObject = creatorFun.apply(roiNucleus);
+        }
+
+        // Set classification, if available
+        PathClass pathClass = globalPathClass;
+
+        if (pathClass != null && pathClass.isValid())
+            pathObject.setPathClass(pathClass);
+        return pathObject;
+
+    }
+
+    /**
+     * Filters the overlapping detections based on their size, a bit like CellDetection and applying the iou threshold
+     *
+     * @param rawDetections the list of detections to filter
+     * @return a list with the filtered results
+     */
+    private List<PathObject> filterDetections(List<PathObject> rawDetections) {
+
+        // Sort by size
+        Collections.sort(rawDetections, Comparator.comparingDouble(o -> -1 * o.getROI().getArea()));
+
+        // Create array of detections to keep & to skip
+        var detections = new LinkedHashSet<PathObject>();
+        var skippedDetections = new HashSet<PathObject>();
+        int skipErrorCount = 0;
+
+        // Create a spatial cache to find overlaps more quickly
+        // (Because of later tests, we don't need to update envelopes even though geometries may be modified)
+        Map<PathObject, Envelope> envelopes = new HashMap<>();
+        var tree = new STRtree();
+        for (var det : rawDetections) {
+            var env = det.getROI().getGeometry().getEnvelopeInternal();
+            envelopes.put(det, env);
+            tree.insert(env, det);
+        }
+
+        for (var detection : rawDetections) {
+            if (skippedDetections.contains(detection))
+                continue;
+
+            detections.add(detection);
+            var envelope = envelopes.get(detection);
+
+            @SuppressWarnings("unchecked")
+            var overlaps = (List<PathObject>) tree.query(envelope);
+            for (var nuc2 : overlaps) {
+                if (nuc2 == detection || skippedDetections.contains(nuc2) || detections.contains(nuc2))
+                    continue;
+
+                // If we have an overlap, retain the larger object only
+                try {
+                    var env = envelopes.get(nuc2);
+                    //iou
+                    Geometry intersection = detection.getROI().getGeometry().intersection(nuc2.getROI().getGeometry());
+                    Geometry union = detection.getROI().getGeometry().union(nuc2.getROI().getGeometry());
+                    double iou = intersection.getArea() / union.getArea();
+                    if (envelope.intersects(env) && detection.getROI().getGeometry().intersects(nuc2.getROI().getGeometry()) && iou > this.iouThreshold) {
+                        skippedDetections.add(nuc2);
+                    }
+                } catch (Exception e) {
+                    skippedDetections.add(nuc2);
+                    skipErrorCount++;
+                }
+
+            }
+        }
+        if (skipErrorCount > 0) {
+            int skipCount = skippedDetections.size();
+            logger.warn("Skipped {} nucleus detection(s) due to error in resolving overlaps ({}% of all skipped)",
+                    skipErrorCount, GeneralTools.formatNumber(skipErrorCount * 100.0 / skipCount, 1));
+        }
+        return new ArrayList<>(detections);
+    }
+
+    /**
+     * Saves a region request as an image. We use the ImageJ API because ImageWriter did not work for me
+     *
+     * @param op        the operations to apply on the image before saving it (32-bit, channel extraction, preprocessing)
+     * @param imageData the current ImageData
+     * @param request   the region we want to save
+     * @return a simple object that contains the request and the associated file in the temp folder
+     * @throws IOException
+     */
+    private TileFile saveTileImage(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request) throws IOException {
+
+        // This applies all ops to the current tile
+        Mat mat;
+
+        mat = op.apply(imageData, request);
+
+        // Convert to something we can save
+        ImagePlus imp = OpenCVTools.matToImagePlus("Temp", mat);
+
+        //BufferedImage image = OpenCVTools.matToBufferedImage(mat);
+
+        File tempFile = new File(cellposeTempFolder, "Temp_" + request.getX() + "_" + request.getY() + ".tif");
+        logger.info("Saving to {}", tempFile);
+        IJ.save(imp, tempFile.getAbsolutePath());
+
+        return new TileFile(request, tempFile);
+    }
+
+    /**
+     * Taken verbatim from StarDist VW simplifier
+     */
+    private Geometry simplify(Geometry geom) {
+        if (simplifyDistance <= 0)
+            return geom;
+        try {
+            return VWSimplifier.simplify(geom, simplifyDistance);
+        } catch (Exception e) {
+            return geom;
+        }
+    }
+
+    /**
+     * This class actually runs Cellpose by calling the virtual environment
+     *
+     * @throws IOException          Exception in case files could not be read
+     * @throws InterruptedException Exception in case of command thread has some failing
+     */
+    private void runCellPose() throws IOException, InterruptedException {
+
+        // Get options
+        CellposeOptions cellposeOptions = CellposeOptions.getInstance();
+
+        // Create command to run
+        VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeOptions.getEnvironmentNameorPath(), cellposeOptions.getEnvironmentType());
+
+        // This is the list of commands after the 'python' call
+        List<String> cellposeArguments = new ArrayList<>();
+
+        cellposeArguments.addAll(Arrays.asList("-W", "ignore", "-m", "cellpose"));
+
+        cellposeArguments.add("--dir");
+        cellposeArguments.add("" + this.cellposeTempFolder);
+
+        cellposeArguments.add("--pretrained_model");
+        cellposeArguments.add("" + this.model);
+
+        cellposeArguments.add("--chan");
+        cellposeArguments.add("" + channel1);
+
+        cellposeArguments.add("--chan2");
+        cellposeArguments.add("" + channel2);
+
+        cellposeArguments.add("--diameter");
+        cellposeArguments.add("" + diameter);
+
+        cellposeArguments.add("--flow_threshold");
+        cellposeArguments.add("" + flowThreshold);
+
+        cellposeArguments.add("--cellprob_threshold");
+        cellposeArguments.add("" + probabilityThreshold);
+
+        cellposeArguments.add("--save_tif");
+
+        cellposeArguments.add("--no_npy");
+        cellposeArguments.add("--resample");
+
+        if (cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
+
+        veRunner.setArguments(cellposeArguments);
+
+        // Finally, we can run Cellpose
+        veRunner.runCommand();
+
+        logger.info("Cellpose command finished running");
+    }
 
     /**
      * Builder to help create a {@link Cellpose2D} with custom parameters.
@@ -117,6 +554,9 @@ public class Cellpose2D {
         private List<ImageOp> ops = new ArrayList<>();
         private double iouThreshold = 0.1;
 
+        private int channel1 = 0; //GRAY
+        private int channel2 = 0; // NONE
+
 
         private Builder(String modelPath) {
             this.modelPath = modelPath;
@@ -148,6 +588,7 @@ public class Cellpose2D {
         /**
          * The extimated diameter of the objects to detect. Cellpose will further downsample the images in order to match
          * their expected diameter
+         *
          * @param diameter in pixels
          * @return
          */
@@ -235,6 +676,10 @@ public class Cellpose2D {
          */
         public Builder channels(ColorTransform... channels) {
             this.channels = channels.clone();
+            if (this.channels.length >= 2) {
+                this.channel1 = 1;
+                this.channel2 = 2;
+            }
             return this;
         }
 
@@ -467,6 +912,12 @@ public class Cellpose2D {
             return this;
         }
 
+        public Builder cellPoseChannels(int channel1, int channel2) {
+            this.channel1 = channel1;
+            this.channel2 = channel2;
+            return this;
+        }
+
         /**
          * Create a {@link Cellpose2D}, all ready for detection.
          *
@@ -488,13 +939,11 @@ public class Cellpose2D {
             cellpose.model = modelPath;
 
 
-
-
             // Add all operations (preprocessing, channel extraction and normalization)
             mergedOps.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
 
             // Ensure there are only 2 channels at most
-            if( channels.length > 2) {
+            if (channels.length > 2) {
                 logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two", channels.length);
                 channels = Arrays.copyOf(channels, 2);
             }
@@ -502,6 +951,8 @@ public class Cellpose2D {
 
             // CellPose accepts either one or two channels. This will help the final command
             cellpose.nChannels = channels.length;
+            cellpose.channel1 = channel1;
+            cellpose.channel2 = channel2;
             cellpose.probabilityThreshold = probabilityThreshold;
             cellpose.flowThreshold = flowThreshold;
             cellpose.pixelSize = pixelSize;
@@ -534,447 +985,6 @@ public class Cellpose2D {
             return cellpose;
         }
 
-    }
-
-    private int nChannels;
-    private double iouThreshold = 0.1;
-    private double simplifyDistance = 1.4;
-    private double probabilityThreshold;
-    private double flowThreshold;
-    private File cellposeTempFolder;
-    private String model;
-    private double diameter;
-    private ImageDataOp op;
-    private double pixelSize;
-    private double cellExpansion;
-    private double cellConstrainScale;
-    private boolean ignoreCellOverlaps;
-
-    private Function<ROI, PathObject> creatorFun;
-    private PathClass globalPathClass;
-
-    private boolean constrainToParent = true;
-
-    private int tileWidth = 1024;
-    private int tileHeight = 1024;
-    private int overlap;
-
-    private boolean measureShape = false;
-
-    private Collection<ObjectMeasurements.Compartments> compartments;
-    private Collection<ObjectMeasurements.Measurements> measurements;
-
-    /**
-     * Create a builder to customize detection parameters.
-     * This accepts either TensorFlow's savedmodel format (if TensorFlow is available) or alternatively a frozen
-     * .pb file compatible with OpenCV's DNN module.
-     *
-     * @param modelPath path to the StarDist/TensorFlow model to use for prediction.
-     * @return
-     */
-    public static Builder builder(String modelPath) {
-        return new Builder(modelPath);
-    }
-
-    /**
-     * Detect cells within one or more parent objects, firing update events upon completion.
-     *
-     * @param imageData the image data containing the object
-     * @param parents   the parent objects; existing child objects will be removed, and replaced by the detected cells
-     */
-    public void detectObjects(ImageData<BufferedImage> imageData, Collection<? extends PathObject> parents)  {
-        //runInPool(() -> detectObjectsImpl(imageData, parents));
-        // Multi step process
-        // 1. Extract all images and save to temp folder
-        // 2. Run Cellpose on folder
-        // 3. Pick up Label images and convert to PathObjects
-
-        // Define temporary folder to work in
-        cellposeTempFolder = new File (QP.buildFilePath(QP.PROJECT_BASE_DIR, "cellpose-temp"));
-        cellposeTempFolder.mkdirs();
-
-        try {
-            FileUtils.cleanDirectory(cellposeTempFolder);
-        } catch (IOException e) {
-            logger.error("Could not clean temp directory {}", cellposeTempFolder);
-            logger.error("Message: ", e);
-        }
-
-        // Get downsample factor
-        int downsample = 1;
-        if (Double.isFinite(pixelSize) && pixelSize > 0) {
-            downsample = (int) Math.round( pixelSize / imageData.getServer().getPixelCalibration().getAveragedPixelSize().doubleValue() );
-        }
-
-        ImageServer<BufferedImage> server = imageData.getServer();
-        PixelCalibration cal = server.getPixelCalibration();
-
-        double expansion = cellExpansion / cal.getAveragedPixelSize().doubleValue();
-
-        final int finalDownsample = downsample;
-
-        List<PathTile> allTiles = parents.parallelStream().map(parent -> {
-
-            // Get for each annotation the individual overlapping tiles
-            Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileWidth * finalDownsample), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileHeight * finalDownsample), true, overlap);
-
-            // Keep a reference to the images here while they are being saved
-            logger.info("Saving images for {} tiles", rois.size());
-
-            // Save each tile to an image and keep a reference to it
-            var individualTiles = rois.parallelStream()
-                    .map(t -> {
-                        // Make a new RegionRequest
-                        var region = RegionRequest.createInstance(server.getPath(), finalDownsample, t);
-                        try {
-                            TileFile file = saveTileImage(op, imageData, region);
-                            return file;
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        }
-                        return null;
-                    })
-                    .collect(Collectors.toList());
-            return new PathTile(parent, individualTiles);
-        }).collect(Collectors.toList());
-
-        // Here the files are saved, and we can run cellpose.
-        try {
-            runCellPose();
-        } catch (IOException e) {
-            logger.error("Failed to Run Cellpose", e);
-        } catch (InterruptedException e) {
-            logger.error("Failed to Run Cellpose", e);
-        }
-
-        // Recover all the images from CellPose to get the masks
-        allTiles.parallelStream().forEach(tileMap -> {
-            PathObject parent = tileMap.getObject();
-            // Read each image
-            List<PathObject> allDetections = Collections.synchronizedList(new ArrayList<PathObject>());
-            tileMap.getTileFiles().parallelStream().forEach(tilefile -> {
-                File ori = tilefile.getFile();
-                File maskFile = new File(ori.getParent(), FilenameUtils.removeExtension(ori.getName()) + "_cp_masks.tif");
-                if (maskFile.exists()) {
-                    try {
-                        logger.info("Getting objects for {}", maskFile);
-
-                        // thank you Pete for the ContourTracing Class
-                        List<PathObject> detections = ContourTracing.labelsToDetections(maskFile.toPath(), tilefile.getTile());
-
-                        //simplify them
-                        detections = detections.parallelStream().map(d -> PathObjects.createDetectionObject(GeometryTools.geometryToROI(simplify(d.getROI().getGeometry()), d.getROI().getImagePlane()), d.getPathClass())).collect(Collectors.toList());
-
-                        allDetections.addAll(detections);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-            });
-
-            // Filter Detections: Remove overlaps
-            List<PathObject> filteredDetections = filterDetections(allDetections);
-
-            // Remove the detections that are not contained within the parent
-            Geometry mask = parent.getROI().getGeometry();
-            filteredDetections = filteredDetections.stream().filter(t -> mask.covers(t.getROI().getGeometry())).collect(Collectors.toList());
-
-            // Convert to detections, dilating to approximate cells if necessary
-            // Drop cells if they fail (rather than catastrophically give up)
-            filteredDetections = filteredDetections.parallelStream()
-                    .map(n -> {
-                        try {
-                            return convertToObject(n, n.getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
-                        } catch (Exception e) {
-                            logger.warn("Error converting to object: " + e.getLocalizedMessage(), e);
-                            return null;
-                        }
-                    }).filter(n -> n != null)
-                    .collect(Collectors.toList());
-
-            // Resolve cell overlaps, if needed
-            if (expansion > 0 && !ignoreCellOverlaps) {
-                logger.info("Resolving cell overlaps for {}", parent);
-                if (creatorFun != null) {
-                    // It's awkward, but we need to temporarily convert to cells and back
-                    var cells = filteredDetections.stream().map(c -> objectToCell(c)).collect(Collectors.toList());
-                    cells = CellTools.constrainCellOverlaps(cells);
-                    filteredDetections = cells.stream().map(c -> cellToObject(c, creatorFun)).collect(Collectors.toList());
-                } else
-                    filteredDetections = CellTools.constrainCellOverlaps(filteredDetections);
-            }
-
-            // Add measurements
-            if (measureShape)
-                filteredDetections.parallelStream().forEach(c -> ObjectMeasurements.addShapeMeasurements(c, cal));
-
-            // Add intensity measurements, if needed
-            if (!filteredDetections.isEmpty() && !measurements.isEmpty()) {
-                logger.info("Making measurements for {}", parent);
-                var stains = imageData.getColorDeconvolutionStains();
-                var builder = new TransformedServerBuilder(server);
-                if (stains != null) {
-                    List<Integer> stainNumbers = new ArrayList<>();
-                    for (int s = 1; s <= 3; s++) {
-                        if (!stains.getStain(s).isResidual())
-                            stainNumbers.add(s);
-                    }
-                    builder.deconvolveStains(stains, stainNumbers.stream().mapToInt(i -> i).toArray());
-                }
-
-                var server2 = builder.build();
-
-                filteredDetections.parallelStream().forEach(cell -> {
-                    try {
-                        ObjectMeasurements.addIntensityMeasurements(server2, cell, finalDownsample, measurements, compartments);
-                    } catch (IOException e) {
-                        logger.error(e.getLocalizedMessage(), e);
-                    }
-                });
-            }
-
-            // Assign the objects to the parent object
-            parent.setLocked(true);
-            parent.clearPathObjects();
-            tileMap.getObject().addPathObjects(filteredDetections);
-        });
-
-        // Update the hierarchy
-        imageData.getHierarchy().fireHierarchyChangedEvent(this);
-
-    }
-
-    // Convenience method to convert a PathObject to cells, taken verbatim from StarDist2D
-    private static PathObject objectToCell(PathObject pathObject) {
-        ROI roiNucleus = null;
-        var children = pathObject.getChildObjects();
-        if (children.size() == 1)
-            roiNucleus = children.iterator().next().getROI();
-        else if (children.size() > 1)
-            throw new IllegalArgumentException("Cannot convert object with multiple child objects to a cell!");
-        return PathObjects.createCellObject(pathObject.getROI(), roiNucleus, pathObject.getPathClass(), pathObject.getMeasurementList());
-    }
-
-    private PathObject convertToObject(PathObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
-        var geomNucleus = simplify(object.getROI().getGeometry());
-        PathObject pathObject;
-        if (cellExpansion > 0) {
-            var geomCell = CellTools.estimateCellBoundary(geomNucleus, cellExpansion, cellConstrainScale);
-            if (mask != null)
-                geomCell = GeometryTools.attemptOperation(geomCell, g -> g.intersection(mask));
-            geomCell = simplify(geomCell);
-
-            if (geomCell.isEmpty()) {
-                logger.warn("Empty cell boundary at {} will be skipped", object.getROI().getGeometry().getCentroid());
-                return null;
-            }
-
-            var roiCell = GeometryTools.geometryToROI(geomCell, plane);
-            var roiNucleus = GeometryTools.geometryToROI(geomNucleus, plane);
-            if (creatorFun == null)
-                pathObject = PathObjects.createCellObject(roiCell, roiNucleus, null, null);
-            else {
-                pathObject = creatorFun.apply(roiCell);
-                if (roiNucleus != null) {
-                    pathObject.addPathObject(creatorFun.apply(roiNucleus));
-                }
-            }
-        } else {
-            if (mask != null) {
-                geomNucleus = GeometryTools.attemptOperation(geomNucleus, g -> g.intersection(mask));
-            }
-            var roiNucleus = GeometryTools.geometryToROI(geomNucleus, plane);
-            if (creatorFun == null)
-                pathObject = PathObjects.createDetectionObject(roiNucleus);
-            else
-                pathObject = creatorFun.apply(roiNucleus);
-        }
-
-        // Set classification, if available
-        PathClass pathClass = globalPathClass;
-
-        if (pathClass != null && pathClass.isValid())
-            pathObject.setPathClass(pathClass);
-        return pathObject;
-
-    }
-
-    private static PathObject cellToObject(PathObject cell, Function<ROI, PathObject> creator) {
-        var parent = creator.apply(cell.getROI());
-        var nucleusROI = cell instanceof PathCellObject ? ((PathCellObject)cell).getNucleusROI() : null;
-        if (nucleusROI != null) {
-            var nucleus = creator.apply(nucleusROI);
-            nucleus.setPathClass(cell.getPathClass());
-            parent.addPathObject(nucleus);
-        }
-        parent.setPathClass(cell.getPathClass());
-        var cellMeasurements = cell.getMeasurementList();
-        if (!cellMeasurements.isEmpty()) {
-            try (var ml = parent.getMeasurementList()) {
-                for (int i = 0; i < cellMeasurements.size(); i++)
-                    ml.addMeasurement(cellMeasurements.getMeasurementName(i), cellMeasurements.getMeasurementValue(i));
-            }
-        }
-        return parent;
-    }
-
-    /**
-     * Filters the overlapping detections based on their size, a bit like CellDetection and applying the iou threshold
-     * @param rawDetections the list of detections to filter
-     * @return a list with the filtered results
-     */
-    private List<PathObject> filterDetections(List<PathObject> rawDetections) {
-
-        // Sort by size
-        Collections.sort(rawDetections, Comparator.comparingDouble(o -> -1 * o.getROI().getArea()));
-
-        // Create array of detections to keep & to skip
-        var detections = new LinkedHashSet<PathObject>();
-        var skippedDetections = new HashSet<PathObject>();
-        int skipErrorCount = 0;
-
-        // Create a spatial cache to find overlaps more quickly
-        // (Because of later tests, we don't need to update envelopes even though geometries may be modified)
-        Map<PathObject, Envelope> envelopes = new HashMap<>();
-        var tree = new STRtree();
-        for (var det : rawDetections) {
-            var env = det.getROI().getGeometry().getEnvelopeInternal();
-            envelopes.put(det, env);
-            tree.insert(env, det);
-        }
-
-        for (var detection : rawDetections) {
-            if (skippedDetections.contains(detection))
-                continue;
-
-            detections.add(detection);
-            var envelope = envelopes.get(detection);
-
-            @SuppressWarnings("unchecked")
-            var overlaps = (List<PathObject>) tree.query(envelope);
-            for (var nuc2 : overlaps) {
-                if (nuc2 == detection || skippedDetections.contains(nuc2) || detections.contains(nuc2))
-                    continue;
-
-                // If we have an overlap, retain the larger object only
-                try {
-                    var env = envelopes.get(nuc2);
-                    //iou
-                    Geometry intersection = detection.getROI().getGeometry().intersection(nuc2.getROI().getGeometry());
-                    Geometry union = detection.getROI().getGeometry().union(nuc2.getROI().getGeometry());
-                    double iou = intersection.getArea() / union.getArea();
-                    if (envelope.intersects(env) && detection.getROI().getGeometry().intersects(nuc2.getROI().getGeometry()) && iou > this.iouThreshold) {
-                        skippedDetections.add(nuc2);
-                    }
-                } catch (Exception e) {
-                    skippedDetections.add(nuc2);
-                    skipErrorCount++;
-                }
-
-            }
-        }
-        if (skipErrorCount > 0) {
-            int skipCount = skippedDetections.size();
-            logger.warn("Skipped {} nucleus detection(s) due to error in resolving overlaps ({}% of all skipped)",
-                    skipErrorCount, GeneralTools.formatNumber(skipErrorCount * 100.0 / skipCount, 1));
-        }
-        return new ArrayList<>(detections);
-    }
-
-    /**
-     * Saves a region request as an image. We use the ImageJ API because ImageWriter did not work for me
-     * @param op the operations to apply on the image before saving it (32-bit, channel extraction, preprocessing)
-     * @param imageData the current ImageData
-     * @param request the region we want to save
-     * @return a simple object that contains the request and the associated file in the temp folder
-     * @throws IOException
-     */
-    private TileFile saveTileImage(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request) throws IOException {
-
-        // This applies all ops to the current tile
-        Mat mat;
-
-        mat = op.apply(imageData, request);
-
-        // Convert to something we can save
-        ImagePlus imp = OpenCVTools.matToImagePlus("Temp", mat);
-
-        //BufferedImage image = OpenCVTools.matToBufferedImage(mat);
-
-        File tempFile = new File(cellposeTempFolder, "Temp_" + request.getX() + "_" + request.getY() + ".tif");
-        logger.info("Saving to {}", tempFile);
-        IJ.save(imp, tempFile.getAbsolutePath());
-
-        return new TileFile(request, tempFile);
-    }
-
-    /**
-     * Taken verbatim from StarDist VW simplifier
-     */
-    private Geometry simplify(Geometry geom) {
-        if (simplifyDistance <= 0)
-            return geom;
-        try {
-            return VWSimplifier.simplify(geom, simplifyDistance);
-        } catch (Exception e) {
-            return geom;
-        }
-    }
-
-    /**
-     * This class actually runs Cellpose by calling the virtual environment
-     * @throws IOException Exception in case files could not be read
-     * @throws InterruptedException Exception in case of command thread has some failing
-     */
-    private void runCellPose() throws IOException, InterruptedException {
-
-        // Get options
-        CellposeOptions cellposeOptions = CellposeOptions.getInstance();
-
-        // Create command to run
-        VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeOptions.getEnvironmentNameorPath(), cellposeOptions.getEnvironmentType());
-
-        // This is the list of commands after the 'python' call
-        List<String> cellposeArguments = new ArrayList<>();
-
-        cellposeArguments.addAll(Arrays.asList("-W", "ignore", "-m", "cellpose"));
-
-        cellposeArguments.add("--dir");
-        cellposeArguments.add("" + this.cellposeTempFolder);
-
-        cellposeArguments.add("--pretrained_model");
-        cellposeArguments.add("" + this.model);
-
-        cellposeArguments.add("--chan");
-        cellposeArguments.add("1");
-
-        if (nChannels > 1) {
-            cellposeArguments.add("--chan2");
-            cellposeArguments.add("2");
-        }
-
-        cellposeArguments.add("--diameter");
-        cellposeArguments.add("" + diameter);
-
-        cellposeArguments.add("--flow_threshold");
-        cellposeArguments.add("" + flowThreshold);
-
-        cellposeArguments.add("--cellprob_threshold");
-        cellposeArguments.add("" + probabilityThreshold);
-
-        cellposeArguments.add("--save_tif");
-
-        cellposeArguments.add("--no_npy");
-        cellposeArguments.add("--resample");
-
-        if(cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
-
-        veRunner.setArguments(cellposeArguments);
-
-        // Finally, we can run Cellpose
-        veRunner.runCommand();
-
-        logger.info("Cellpose command finished running");
     }
 
     private static class TileFile {
