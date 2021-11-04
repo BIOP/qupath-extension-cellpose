@@ -54,7 +54,7 @@ public class Cellpose2DTraining {
         int finalDownsample = downsample;
 
         logger.info("Saving Images...");
-        annotations.parallelStream().forEach(a -> {
+        annotations.stream().forEach(a -> {
             int i = idx.getAndIncrement();
 
             RegionRequest request = RegionRequest.createInstance(originalServer.getPath(), finalDownsample, a.getROI());
@@ -300,6 +300,27 @@ public class Cellpose2DTraining {
          */
         public Builder pixelSize(double pixelSize) {
             this.pixelSize = pixelSize;
+            return this;
+        }
+
+        /**
+         * Apply percentile normalization to the input image channels.
+         * <p>
+         * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
+         * in which case the order in which the operations are applied depends upon the order
+         * in which the methods of the builder are called.
+         * <p>
+         * Warning! This is applied on a per-tile basis. This can result in artifacts and false detections
+         * without background/constant regions.
+         * Consider using {@link #inputAdd(double...)} and {@link #inputScale(double...)} as alternative
+         * normalization strategies, if appropriate constants can be determined to apply globally.
+         *
+         * @param min minimum percentile
+         * @param max maximum percentile
+         * @return this builder
+         */
+        public Builder normalizePercentiles(double min, double max) {
+            this.ops.add(ImageOps.Normalize.percentile(min, max));
             return this;
         }
 

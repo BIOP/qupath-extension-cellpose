@@ -1,7 +1,7 @@
 import qupath.ext.biop.cellpose.Cellpose2DTraining
 
 // Example for training cellpose
-// Requries a project, where there are annotations (usually rectangles) of class "Training" and "Validation" in which there are objects inside.
+// Requires a project, where there are annotations (usually rectangles) of class "Training" and "Validation" in which there are objects inside.
 // The objects that you have annotated which will be exported as labeled images should have no PathClass at all.
 
 
@@ -9,7 +9,6 @@ def cellposeTrainer = new Cellpose2DTraining.Builder('cyto2')
         .channels("my", "channels") // Up to two channels for training.
         .pixelSize(1.2976)
         .epochs(500)
-        .diameter(90) // Diameter for cellpose to further downsample your data to the desired model
         .modelDirectory("/where/my/model/should/be/saved")
         .build()
 

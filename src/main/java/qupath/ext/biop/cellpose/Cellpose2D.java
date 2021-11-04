@@ -402,8 +402,15 @@ public class Cellpose2D {
                     Geometry intersection = detection.getROI().getGeometry().intersection(nuc2.getROI().getGeometry());
                     Geometry union = detection.getROI().getGeometry().union(nuc2.getROI().getGeometry());
                     double iou = intersection.getArea() / union.getArea();
-                    if (envelope.intersects(env) && detection.getROI().getGeometry().intersects(nuc2.getROI().getGeometry()) && iou > this.iouThreshold) {
-                        skippedDetections.add(nuc2);
+
+                    // Get the difference between the two. In case the result is smaller than half the area of the largest object, remove it
+                    // Or if it exceeds the allowed IoU threshold
+                    Geometry difference = nuc2.getROI().getGeometry().difference(detection.getROI().getGeometry());
+
+                    if (envelope.intersects(env) && detection.getROI().getGeometry().intersects(nuc2.getROI().getGeometry())) {
+                         if( iou > this.iouThreshold || difference.getArea() < detection.getROI().getGeometry().getArea() / 2.0 ) {
+                             skippedDetections.add(nuc2);
+                         }
                     }
                 } catch (Exception e) {
                     skippedDetections.add(nuc2);
