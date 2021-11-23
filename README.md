@@ -27,6 +27,10 @@ source /where/you/want/your/cellpose/bin/activate
 pip install cellpose 
 ```
 
+### Step 1.1: Run Cellpose at least once from the command line
+
+If you never ran Cellpose before, it needs to download its pretrained models the first time you run it. This may take some time and we've experienced the process hanging if done through QuPath. Just run cellpose from your command line and it should download all the models. Do this before using it in QuPath.
+
 ### Step 2: Install the QuPath Cellpose extension
 Download the latest `qupath-extension-cellpose-[version].jar` file from [releases](https://github.com/biop/qupath-extension-cellpose/releases) and drag it onto the main QuPath window.
 
@@ -35,7 +39,7 @@ The extension will then be copied to a location inside that directory.
 
 You might then need to restart QuPath (but not your computer).
 
-### First time setup
+### QuPath: First time setup
 Go to `Edit > Preferences > Cellpose`
 Complete the fields with the requested information
 The example below is from a full GPU enabled cellpose installation that was made [by following the instructions here](https://c4science.ch/w/bioimaging_and_optics_platform_biop/computers-servers/software/gpu-deep-learning/python-venv/#cellpose). 
@@ -97,8 +101,3 @@ The output will be under `build/libs`.
 * `clean` removes anything old
 * `build` builds the QuPath extension as a *.jar* file and adds it to `libs`
 
-## First Run
-
-If you never ran Cellpose before, it will download its pretrained models the first time you run it. This may take some time and we've experienced the process hanging. If it hangs during the download  go to `Run > Kill Running Script`. Then run the script again. It will continue downloading the pretrained models. You may need to do this more than once...
-
-Another alternative is to run cellpose once from the command line before running it within QuPath. 
