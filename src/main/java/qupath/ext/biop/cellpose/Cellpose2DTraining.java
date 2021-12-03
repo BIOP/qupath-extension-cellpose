@@ -39,6 +39,7 @@ public class Cellpose2DTraining {
     private ImageDataOp op;
     private double pixelSize;
     private boolean invert;
+    private boolean useOmnipose;
 
     private void saveImagePairs(List<PathObject> annotations, String imageName, ImageServer<BufferedImage> originalServer, ImageServer<BufferedImage> labelServer, File saveDirectory) {
 
@@ -54,7 +55,7 @@ public class Cellpose2DTraining {
         int finalDownsample = downsample;
 
         logger.info("Saving Images...");
-        annotations.stream().forEach(a -> {
+        annotations.forEach(a -> {
             int i = idx.getAndIncrement();
 
             RegionRequest request = RegionRequest.createInstance(originalServer.getPath(), finalDownsample, a.getROI());
@@ -178,6 +179,7 @@ public class Cellpose2DTraining {
         cellposeArguments.add("" + nEpochs);
 
         if (invert) cellposeArguments.add("--invert");
+        if (useOmnipose) cellposeArguments.add("--omni");
 
         if (cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
 
@@ -198,15 +200,16 @@ public class Cellpose2DTraining {
         private ColorTransforms.ColorTransform[] channels = new ColorTransforms.ColorTransform[0];
         private String pretrainedModel;
 
-        private double diameter = 100;
-        private int nEpochs;
+        private double diameter = 0;
+        private int nEpochs = 500;
         private int channel1 = 0; //GRAY
         private int channel2 = 0; // NONE
 
         private double pixelSize = Double.NaN;
 
         private final List<ImageOp> ops = new ArrayList<>();
-        private boolean isInvert;
+        private boolean isInvert = false;
+        private boolean useOmnipose = false;
 
         private Builder(String pretrainedModel) {
             this.pretrainedModel = pretrainedModel;
@@ -224,7 +227,7 @@ public class Cellpose2DTraining {
         }
 
         /**
-         * The extimated diameter of the objects to detect. Cellpose will further downsample the images in order to match
+         * The estimated diameter of the objects to detect. Cellpose will further downsample the images in order to match
          * their expected diameter
          *
          * @param diameter in pixels
@@ -319,6 +322,7 @@ public class Cellpose2DTraining {
          * @param max maximum percentile
          * @return this builder
          */
+
         public Builder normalizePercentiles(double min, double max) {
             this.ops.add(ImageOps.Normalize.percentile(min, max));
             return this;
@@ -356,11 +360,31 @@ public class Cellpose2DTraining {
             return this;
         }
 
-        public Builder invertChannels(boolean isInvert) {
-            this.isInvert = isInvert;
+        /**
+         * Inverts the image channels within cellpose. Adds the --invert flag to the command
+         * @return this builder
+         */
+        public Builder invert() {
+            this.isInvert = true;
             return this;
         }
 
+        /**
+         * Use Omnipose implementation: Adds --omni flag to command
+         *
+         * @return this builder
+         */
+        public Builder useOmnipose() {
+            this.useOmnipose = true;
+            return this;
+        }
+
+        /**
+         * Sets the channels to use by cellpose, in case there is an issue with the order or the number of exported channels
+         * @param channel1 the main channel
+         * @param channel2 the second channel (typically nuclei)
+         * @return this builder
+         */
         public Builder cellposeChannels(int channel1, int channel2) {
             this.channel1 = channel1;
             this.channel2 = channel2;
@@ -420,6 +444,7 @@ public class Cellpose2DTraining {
             cellpose.diameter = diameter;
             cellpose.invert = isInvert;
             cellpose.nEpochs = nEpochs;
+            cellpose.useOmnipose = useOmnipose;
             cellpose.trainDirectory = trainDirectory;
             cellpose.valDirectory = valDirectory;
             cellpose.modelDirectory = modelDirectory;

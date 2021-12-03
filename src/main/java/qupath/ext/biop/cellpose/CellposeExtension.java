@@ -83,6 +83,6 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
     @Override
     public Version getVersion() {
-        return Version.parse("0.1.3");
+        return Version.parse("0.1.4");
     }
 }

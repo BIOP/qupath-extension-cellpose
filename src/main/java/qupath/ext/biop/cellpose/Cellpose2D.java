@@ -72,10 +72,10 @@ import java.util.stream.Collectors;
  *
  * <p>
  * The structure of this extension was adapted from the qupath-stardist-extension at https://github.com/qupath/qupath-extension-stardist
- * This way the Cellpose builder mirrors the StarDist2D builder, which should allow users familiar with the StarDist extension to use this one
+ * This way the Cellpose builder mirrors the StarDist2D builder, which should allow users familiar with the StarDist extension to use this one.
  * <p>
  *
- * @author Olivier Burri (this implementation, but based on the others)
+ * @author Olivier Burri
  */
 public class Cellpose2D {
 
@@ -84,7 +84,7 @@ public class Cellpose2D {
     private int channel2;
     private double iouThreshold = 0.1;
     private double simplifyDistance = 1.4;
-    private double probabilityThreshold;
+    private double maskThreshold;
     private double flowThreshold;
     private File cellposeTempFolder;
     private String model;
@@ -104,6 +104,9 @@ public class Cellpose2D {
     private Collection<ObjectMeasurements.Compartments> compartments;
     private Collection<ObjectMeasurements.Measurements> measurements;
     private boolean invert;
+    private boolean useOmnipose=false;
+    private boolean excludeEdges = false;
+    private boolean doCluster = false;
 
     /**
      * Create a builder to customize detection parameters.
@@ -483,7 +486,6 @@ public class Cellpose2D {
         VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeOptions.getEnvironmentNameorPath(), cellposeOptions.getEnvironmentType());
 
         // This is the list of commands after the 'python' call
-
         List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-W", "ignore", "-m", "cellpose"));
 
         cellposeArguments.add("--dir");
@@ -504,8 +506,8 @@ public class Cellpose2D {
         cellposeArguments.add("--flow_threshold");
         cellposeArguments.add("" + flowThreshold);
 
-        cellposeArguments.add("--cellprob_threshold");
-        cellposeArguments.add("" + probabilityThreshold);
+        cellposeArguments.add("--" + "mask_threshold");
+        cellposeArguments.add("" + maskThreshold);
 
         cellposeArguments.add("--save_tif");
 
@@ -513,6 +515,10 @@ public class Cellpose2D {
 
         cellposeArguments.add("--resample");
 
+        if(useOmnipose) cellposeArguments.add("--omni");
+        if(doCluster) cellposeArguments.add("--cluster");
+        if(excludeEdges) cellposeArguments.add("--exclude_on_edges");
+        
         if (invert) cellposeArguments.add("--invert");
 
 
@@ -534,9 +540,9 @@ public class Cellpose2D {
         private final String modelPath;
         private ColorTransform[] channels = new ColorTransform[0];
 
-        private double probabilityThreshold = 0.5;
-        private double flowThreshold = 0.0;
-        private double diameter = 100;
+        private double maskThreshold = 0.0;
+        private double flowThreshold = 0.4;
+        private double diameter = 30;
 
         private double simplifyDistance = 1.4;
         private double cellExpansion = Double.NaN;
@@ -565,6 +571,9 @@ public class Cellpose2D {
         private int channel2 = 0; // NONE
         private boolean isInvert = false;
 
+        private boolean useOmnipose = false;
+        private boolean excludeEdges = false;
+        private boolean doCluster = false;
 
         private Builder(String modelPath) {
             this.modelPath = modelPath;
@@ -572,76 +581,18 @@ public class Cellpose2D {
         }
 
         /**
-         * Probability threshold to apply for detection, between 0 and 1.
-         *
-         * @param threshold probability threshold between 0 and 1 (default 0.5)
-         * @return this builder
-         */
-        public Builder probabilityThreshold(double threshold) {
-            this.probabilityThreshold = threshold;
-            return this;
-        }
-
-        /**
-         * Flow threshold to apply for detection, between 0 and 1.
-         *
-         * @param threshold flow threshold (default 0.0)
-         * @return this builder
-         */
-        public Builder flowThreshold(double threshold) {
-            this.flowThreshold = threshold;
-            return this;
-        }
-
-        /**
-         * The extimated diameter of the objects to detect. Cellpose will further downsample the images in order to match
-         * their expected diameter
-         *
-         * @param diameter in pixels
-         * @return this builder
-         */
-        public Builder diameter(double diameter) {
-            this.diameter = diameter;
-            return this;
-        }
-
-        /**
-         * Add preprocessing operations, if required.
-         *
-         * @param ops series of ImageOps to apply to this server before saving the images
-         * @return this builder
-         */
-        public Builder preprocess(ImageOp... ops) {
-            Collections.addAll(this.ops, ops);
-            return this;
-        }
-
-        /**
-         * Customize the extent to which contours are simplified.
-         * Simplification reduces the number of vertices, which in turn can reduce memory requirements and
-         * improve performance.
+         * Resolution at which the cell detection should be run.
+         * The units depend upon the {@link PixelCalibration} of the input image.
          * <p>
-         * Implementation note: this currently uses the Visvalingam-Whyatt algorithm.
-         *
-         * @param distance simplify distance threshold; set &le; 0 to turn off additional simplification
-         * @return this builder
-         */
-        public Builder simplify(double distance) {
-            this.simplifyDistance = distance;
-            return this;
-        }
-
-        /**
-         * Select the Intersection over Union (IoU) cutoff for excluding overlapping detections.
-         * Default of 0.1 is good enough
+         * The default is to use the full resolution of the input image.
          * <p>
-         * Implementation note: this currently uses the Visvalingam-Whyatt algorithm.
+         * For an image calibrated in microns, the recommended default is approximately 0.5.
          *
-         * @param iouThreshold simplify distance threshold; set &le; 0 to turn off additional simplification
+         * @param pixelSize Pixel size in microns for the analysis
          * @return this builder
          */
-        public Builder iou(double iouThreshold) {
-            this.iouThreshold = iouThreshold;
+        public Builder pixelSize(double pixelSize) {
+            this.pixelSize = pixelSize;
             return this;
         }
 
@@ -691,178 +642,13 @@ public class Cellpose2D {
         }
 
         /**
-         * Amount by which to expand detected nuclei to approximate the cell area.
-         * Units are the same as for the {@link PixelCalibration} of the input image.
-         * <p>
-         * Warning! This is rather experimental, relying heavily on JTS and a convoluted method of
-         * resolving overlaps using a Voronoi tessellation.
-         * <p>
-         * In short, be wary.
+         * Add preprocessing operations, if required.
          *
-         * @param distance cell expansion distance in microns
+         * @param ops series of ImageOps to apply to this server before saving the images
          * @return this builder
          */
-        public Builder cellExpansion(double distance) {
-            this.cellExpansion = distance;
-            return this;
-        }
-
-        /**
-         * Constrain any cell expansion defined using {@link #cellExpansion(double)} based upon
-         * the nucleus size. Only meaningful for values &gt; 1; the nucleus is expanded according
-         * to the scale factor, and used to define the maximum permitted cell expansion.
-         *
-         * @param scale a number to multiply each pixel in the image by
-         * @return this builder
-         */
-        public Builder cellConstrainScale(double scale) {
-            this.cellConstrainScale = scale;
-            return this;
-        }
-
-        /**
-         * Create annotations rather than detections (the default).
-         * If cell expansion is not zero, the nucleus will be included as a child object.
-         *
-         * @return this builder
-         */
-        public Builder createAnnotations() {
-            this.creatorFun = PathObjects::createAnnotationObject;
-            return this;
-        }
-
-        /**
-         * Request that a classification is applied to all created objects.
-         *
-         * @param pathClass the PathClass of all detections resulting from this run
-         * @return this builder
-         */
-        public Builder classify(PathClass pathClass) {
-            this.globalPathClass = pathClass;
-            return this;
-        }
-
-        /**
-         * Request that a classification is applied to all created objects.
-         * This is a convenience method that get a {@link PathClass} from  {@link PathClassFactory}.
-         *
-         * @param pathClassName the name of the PathClass for all detections
-         * @return this builder
-         */
-        public Builder classify(String pathClassName) {
-            return classify(PathClassFactory.getPathClass(pathClassName, (Integer) null));
-        }
-
-        /**
-         * If true, ignore overlaps when computing cell expansion.
-         *
-         * @param ignore ignore overlaps when computing cell expansion.
-         * @return this builder
-         */
-        public Builder ignoreCellOverlaps(boolean ignore) {
-            this.ignoreCellOverlaps = ignore;
-            return this;
-        }
-
-        /**
-         * If true, constrain nuclei and cells to any parent annotation (default is true).
-         *
-         * @param constrainToParent constrain nuclei and cells to any parent annotation
-         * @return this builder
-         */
-        public Builder constrainToParent(boolean constrainToParent) {
-            this.constrainToParent = constrainToParent;
-            return this;
-        }
-
-        /**
-         * Request default intensity measurements are made for all available cell compartments.
-         *
-         * @return this builder
-         */
-        public Builder measureIntensity() {
-            this.measurements = Arrays.asList(
-                    Measurements.MEAN,
-                    Measurements.MEDIAN,
-                    Measurements.MIN,
-                    Measurements.MAX,
-                    Measurements.STD_DEV);
-            return this;
-        }
-
-        /**
-         * Request specified intensity measurements are made for all available cell compartments.
-         *
-         * @param measurements the measurements to make
-         * @return this builder
-         */
-        public Builder measureIntensity(Collection<Measurements> measurements) {
-            this.measurements = new ArrayList<>(measurements);
-            return this;
-        }
-
-        /**
-         * Request shape measurements are made for the detected cell or nucleus.
-         *
-         * @return this builder
-         */
-        public Builder measureShape() {
-            measureShape = true;
-            return this;
-        }
-
-        /**
-         * Specify the compartments within which intensity measurements are made.
-         * Only effective if {@link #measureIntensity()} and {@link #cellExpansion(double)} have been selected.
-         *
-         * @param compartments cell compartments for intensity measurements
-         * @return this builder
-         */
-        public Builder compartments(Compartments... compartments) {
-            this.compartments = Arrays.asList(compartments);
-            return this;
-        }
-
-        /**
-         * Resolution at which the cell detection should be run.
-         * The units depend upon the {@link PixelCalibration} of the input image.
-         * <p>
-         * The default is to use the full resolution of the input image.
-         * <p>
-         * For an image calibrated in microns, the recommended default is approximately 0.5.
-         *
-         * @param pixelSize Pixel size in microns for the analysis
-         * @return this builder
-         */
-        public Builder pixelSize(double pixelSize) {
-            this.pixelSize = pixelSize;
-            return this;
-        }
-
-        /**
-         * Size in pixels of a tile used for detection.
-         * Note that tiles are independently normalized, and therefore tiling can impact
-         * the results. Default is 1024.
-         *
-         * @param tileSize if the regions must be broken down, how large should the tiles be, in pixels (width and height)
-         * @return this builder
-         */
-        public Builder tileSize(int tileSize) {
-            return tileSize(tileSize, tileSize);
-        }
-
-        /**
-         * Size in pixels of a tile used for detection.
-         * Note that tiles are independently normalized, and therefore tiling can impact
-         * the results. Default is 1024.
-         *
-         * @param tileWidth if the regions must be broken down, how large should the tiles be (width), in pixels
-         * @param tileHeight if the regions must be broken down, how large should the tiles be (height), in pixels
-         * @return this builder
-         */
-        public Builder tileSize(int tileWidth, int tileHeight) {
-            this.tileWidth = tileWidth;
-            this.tileHeight = tileHeight;
+        public Builder preprocess(ImageOp... ops) {
+            Collections.addAll(this.ops, ops);
             return this;
         }
 
@@ -919,14 +705,278 @@ public class Cellpose2D {
             return this;
         }
 
-        public Builder invertChannels(boolean isInvert) {
-            this.isInvert = isInvert;
+        /**
+         * Size in pixels of a tile used for detection.
+         * Note that tiles are independently normalized, and therefore tiling can impact
+         * the results. Default is 1024.
+         *
+         * @param tileSize if the regions must be broken down, how large should the tiles be, in pixels (width and height)
+         * @return this builder
+         */
+        public Builder tileSize(int tileSize) {
+            return tileSize(tileSize, tileSize);
+        }
+
+        /**
+         * Size in pixels of a tile used for detection.
+         * Note that tiles are independently normalized, and therefore tiling can impact
+         * the results. Default is 1024.
+         *
+         * @param tileWidth if the regions must be broken down, how large should the tiles be (width), in pixels
+         * @param tileHeight if the regions must be broken down, how large should the tiles be (height), in pixels
+         * @return this builder
+         */
+        public Builder tileSize(int tileWidth, int tileHeight) {
+            this.tileWidth = tileWidth;
+            this.tileHeight = tileHeight;
             return this;
         }
 
+        /**
+         * Sets the channels to use by cellpose, in case there is an issue with the order or the number of exported channels
+         * @param channel1 the main channel
+         * @param channel2 the second channel (typically nuclei)
+         * @return this builder
+         */
         public Builder cellposeChannels(int channel1, int channel2) {
             this.channel1 = channel1;
             this.channel2 = channel2;
+            return this;
+        }
+
+        /**
+         * Probability threshold to apply for detection, between 0 and 1.
+         *
+         * @param threshold probability threshold between 0 and 1 (default 0.5)
+         * @return this builder
+         */
+        public Builder maskThreshold(double threshold) {
+            this.maskThreshold = threshold;
+            return this;
+        }
+
+        /**
+         * Flow threshold to apply for detection, between 0 and 1.
+         *
+         * @param threshold flow threshold (default 0.0)
+         * @return this builder
+         */
+        public Builder flowThreshold(double threshold) {
+            this.flowThreshold = threshold;
+            return this;
+        }
+
+        /**
+         * The extimated diameter of the objects to detect. Cellpose will further downsample the images in order to match
+         * their expected diameter
+         *
+         * @param diameter in pixels
+         * @return this builder
+         */
+        public Builder diameter(double diameter) {
+            this.diameter = diameter;
+            return this;
+        }
+
+        /**
+         * Inverts the image channels within cellpose. Adds the --invert flag to the command
+         * @return this builder
+         */
+        public Builder invert() {
+            this.isInvert = true;
+            return this;
+        }
+
+        /**
+         * Use Omnipose implementation: Adds --omni flag to command
+         *
+         * @return this builder
+         */
+        public Builder useOmnipose() {
+            this.useOmnipose = true;
+            return this;
+
+        }
+
+        /**
+         * Exclude on edges. Adds --exclude_on_edges flag to command
+         *
+         * @return this builder
+         */
+        public Builder excludeEdges() {
+            this.excludeEdges = true;
+            return this;
+        }
+
+        /**
+         * DBSCAN clustering. Reduces oversegmentation of thin features, adds --cluster flag to command.
+         *
+         * @return this builder
+         */
+        public Builder clusterDBSCAN() {
+            this.doCluster = true;
+            return this;
+        }
+
+        /**
+         * Customize the extent to which contours are simplified.
+         * Simplification reduces the number of vertices, which in turn can reduce memory requirements and
+         * improve performance.
+         * <p>
+         * Implementation note: this currently uses the Visvalingam-Whyatt algorithm.
+         *
+         * @param distance simplify distance threshold; set &le; 0 to turn off additional simplification
+         * @return this builder
+         */
+        public Builder simplify(double distance) {
+            this.simplifyDistance = distance;
+            return this;
+        }
+
+        /**
+         * Select the Intersection over Union (IoU) cutoff for excluding overlapping detections.
+         * Default of 0.1 is good enough
+         * <p>
+         * Implementation note: this currently uses the Visvalingam-Whyatt algorithm.
+         *
+         * @param iouThreshold simplify distance threshold; set &le; 0 to turn off additional simplification
+         * @return this builder
+         */
+        public Builder iou(double iouThreshold) {
+            this.iouThreshold = iouThreshold;
+            return this;
+        }
+
+        /**
+         * Amount by which to expand detected nuclei to approximate the cell area.
+         * Units are the same as for the {@link PixelCalibration} of the input image.
+         * <p>
+         * Warning! This is rather experimental, relying heavily on JTS and a convoluted method of
+         * resolving overlaps using a Voronoi tessellation.
+         * <p>
+         * In short, be wary.
+         *
+         * @param distance cell expansion distance in microns
+         * @return this builder
+         */
+        public Builder cellExpansion(double distance) {
+            this.cellExpansion = distance;
+            return this;
+        }
+
+        /**
+         * Constrain any cell expansion defined using {@link #cellExpansion(double)} based upon
+         * the nucleus size. Only meaningful for values &gt; 1; the nucleus is expanded according
+         * to the scale factor, and used to define the maximum permitted cell expansion.
+         *
+         * @param scale a number to multiply each pixel in the image by
+         * @return this builder
+         */
+        public Builder cellConstrainScale(double scale) {
+            this.cellConstrainScale = scale;
+            return this;
+        }
+
+        /**
+         * Request that a classification is applied to all created objects.
+         *
+         * @param pathClass the PathClass of all detections resulting from this run
+         * @return this builder
+         */
+        public Builder classify(PathClass pathClass) {
+            this.globalPathClass = pathClass;
+            return this;
+        }
+
+        /**
+         * Request that a classification is applied to all created objects.
+         * This is a convenience method that get a {@link PathClass} from  {@link PathClassFactory}.
+         *
+         * @param pathClassName the name of the PathClass for all detections
+         * @return this builder
+         */
+        public Builder classify(String pathClassName) {
+            return classify(PathClassFactory.getPathClass(pathClassName, (Integer) null));
+        }
+
+        /**
+         * If true, ignore overlaps when computing cell expansion.
+         *
+         * @param ignore ignore overlaps when computing cell expansion.
+         * @return this builder
+         */
+        public Builder ignoreCellOverlaps(boolean ignore) {
+            this.ignoreCellOverlaps = ignore;
+            return this;
+        }
+
+        /**
+         * If true, constrain nuclei and cells to any parent annotation (default is true).
+         *
+         * @param constrainToParent constrain nuclei and cells to any parent annotation
+         * @return this builder
+         */
+        public Builder constrainToParent(boolean constrainToParent) {
+            this.constrainToParent = constrainToParent;
+            return this;
+        }
+
+        /**
+         * Create annotations rather than detections (the default).
+         * If cell expansion is not zero, the nucleus will be included as a child object.
+         *
+         * @return this builder
+         */
+        public Builder createAnnotations() {
+            this.creatorFun = PathObjects::createAnnotationObject;
+            return this;
+        }
+
+        /**
+         * Request default intensity measurements are made for all available cell compartments.
+         *
+         * @return this builder
+         */
+        public Builder measureIntensity() {
+            this.measurements = Arrays.asList(
+                    Measurements.MEAN,
+                    Measurements.MEDIAN,
+                    Measurements.MIN,
+                    Measurements.MAX,
+                    Measurements.STD_DEV);
+            return this;
+        }
+
+        /**
+         * Request specified intensity measurements are made for all available cell compartments.
+         *
+         * @param measurements the measurements to make
+         * @return this builder
+         */
+        public Builder measureIntensity(Collection<Measurements> measurements) {
+            this.measurements = new ArrayList<>(measurements);
+            return this;
+        }
+
+        /**
+         * Request shape measurements are made for the detected cell or nucleus.
+         *
+         * @return this builder
+         */
+        public Builder measureShape() {
+            measureShape = true;
+            return this;
+        }
+
+        /**
+         * Specify the compartments within which intensity measurements are made.
+         * Only effective if {@link #measureIntensity()} and {@link #cellExpansion(double)} have been selected.
+         *
+         * @param compartments cell compartments for intensity measurements
+         * @return this builder
+         */
+        public Builder compartments(Compartments... compartments) {
+            this.compartments = Arrays.asList(compartments);
             return this;
         }
 
@@ -964,11 +1014,14 @@ public class Cellpose2D {
             // CellPose accepts either one or two channels. This will help the final command
             cellpose.channel1 = channel1;
             cellpose.channel2 = channel2;
-            cellpose.probabilityThreshold = probabilityThreshold;
+            cellpose.maskThreshold = maskThreshold;
             cellpose.flowThreshold = flowThreshold;
             cellpose.pixelSize = pixelSize;
             cellpose.diameter = diameter;
             cellpose.invert = isInvert;
+            cellpose.doCluster = doCluster;
+            cellpose.excludeEdges = excludeEdges;
+            cellpose.useOmnipose = useOmnipose;
 
             // Overlap for segmentation of tiles. Should be large enough that any object must be "complete"
             // in at least one tile for resolving overlaps
