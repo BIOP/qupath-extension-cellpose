@@ -24,7 +24,6 @@ import org.bytedeco.opencv.opencv_core.Mat;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.index.strtree.STRtree;
-import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.biop.cmd.VirtualEnvironmentRunner;
@@ -83,7 +82,6 @@ public class Cellpose2D {
     private int channel1;
     private int channel2;
     private double iouThreshold = 0.1;
-    private double simplifyDistance = 1.4;
     private double maskThreshold;
     private double flowThreshold;
     private File cellposeTempFolder;
@@ -107,6 +105,7 @@ public class Cellpose2D {
     private boolean useOmnipose=false;
     private boolean excludeEdges = false;
     private boolean doCluster = false;
+    private CellposeOptions cellposeOptions;
 
     /**
      * Create a builder to customize detection parameters.
@@ -233,9 +232,6 @@ public class Cellpose2D {
                         // thank you Pete for the ContourTracing Class
                         List<PathObject> detections = ContourTracing.labelsToDetections(maskFile.toPath(), tilefile.getTile());
 
-                        //simplify them
-                        detections = detections.parallelStream().map(d -> PathObjects.createDetectionObject(GeometryTools.geometryToROI(simplify(d.getROI().getGeometry()), d.getROI().getImagePlane()), d.getPathClass())).collect(Collectors.toList());
-
                         allDetections.addAll(detections);
                     } catch (IOException e) {
                         e.printStackTrace();
@@ -316,13 +312,12 @@ public class Cellpose2D {
     }
 
     private PathObject convertToObject(PathObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
-        var geomNucleus = simplify(object.getROI().getGeometry());
+        var geomNucleus = object.getROI().getGeometry();
         PathObject pathObject;
         if (cellExpansion > 0) {
             var geomCell = CellTools.estimateCellBoundary(geomNucleus, cellExpansion, cellConstrainScale);
             if (mask != null)
                 geomCell = GeometryTools.attemptOperation(geomCell, g -> g.intersection(mask));
-            geomCell = simplify(geomCell);
 
             if (geomCell.isEmpty()) {
                 logger.warn("Empty cell boundary at {} will be skipped", object.getROI().getGeometry().getCentroid());
@@ -406,12 +401,10 @@ public class Cellpose2D {
                     Geometry union = detection.getROI().getGeometry().union(nuc2.getROI().getGeometry());
                     double iou = intersection.getArea() / union.getArea();
 
-                    // Get the difference between the two. In case the result is smaller than half the area of the largest object, remove it
-                    // Or if it exceeds the allowed IoU threshold
-                    Geometry difference = nuc2.getROI().getGeometry().difference(detection.getROI().getGeometry());
-
+                    // If the intersection area is close to that of nuc2, then nuc2 is almost contained inside the first object
+                    // CAREFUL, as this uses already simplified shapes, the result will be different with and without simplifications
                     if (envelope.intersects(env) && detection.getROI().getGeometry().intersects(nuc2.getROI().getGeometry())) {
-                         if( iou > this.iouThreshold || difference.getArea() < detection.getROI().getGeometry().getArea() / 2.0 ) {
+                        if( iou > this.iouThreshold || intersection.getArea() / nuc2.getROI().getGeometry().getArea() > 0.9 ) {
                              skippedDetections.add(nuc2);
                          }
                     }
@@ -424,7 +417,7 @@ public class Cellpose2D {
         }
         if (skipErrorCount > 0) {
             int skipCount = skippedDetections.size();
-            logger.warn("Skipped {} nucleus detection(s) due to error in resolving overlaps ({}% of all skipped)",
+            logger.warn("Skipped {} detection(s) due to error in resolving overlaps ({}% of all skipped)",
                     skipErrorCount, GeneralTools.formatNumber(skipErrorCount * 100.0 / skipCount, 1));
         }
         return new ArrayList<>(detections);
@@ -458,18 +451,6 @@ public class Cellpose2D {
         return new TileFile(request, tempFile);
     }
 
-    /**
-     * Taken verbatim from StarDist VW simplifier
-     */
-    private Geometry simplify(Geometry geom) {
-        if (simplifyDistance <= 0)
-            return geom;
-        try {
-            return VWSimplifier.simplify(geom, simplifyDistance);
-        } catch (Exception e) {
-            return geom;
-        }
-    }
 
     /**
      * This class actually runs Cellpose by calling the virtual environment
@@ -478,9 +459,6 @@ public class Cellpose2D {
      * @throws InterruptedException Exception in case of command thread has some failing
      */
     private void runCellPose() throws IOException, InterruptedException {
-
-        // Get options
-        CellposeOptions cellposeOptions = CellposeOptions.getInstance();
 
         // Create command to run
         VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeOptions.getEnvironmentNameorPath(), cellposeOptions.getEnvironmentType());
@@ -503,17 +481,13 @@ public class Cellpose2D {
         cellposeArguments.add("--diameter");
         cellposeArguments.add("" + diameter);
 
+
         cellposeArguments.add("--flow_threshold");
         cellposeArguments.add("" + flowThreshold);
 
-        cellposeArguments.add("--" + "mask_threshold");
+        if( cellposeOptions.getVersion().equals(CellposeOptions.CellposeVersion.OMNIPOSE)) cellposeArguments.add("--mask_threshold");
+        else cellposeArguments.add("--cellprob_threshold");
         cellposeArguments.add("" + maskThreshold);
-
-        cellposeArguments.add("--save_tif");
-
-        cellposeArguments.add("--no_npy");
-
-        cellposeArguments.add("--resample");
 
         if(useOmnipose) cellposeArguments.add("--omni");
         if(doCluster) cellposeArguments.add("--cluster");
@@ -521,6 +495,11 @@ public class Cellpose2D {
         
         if (invert) cellposeArguments.add("--invert");
 
+        cellposeArguments.add("--save_tif");
+
+        cellposeArguments.add("--no_npy");
+
+        cellposeArguments.add("--resample");
 
         if (cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
 
@@ -538,13 +517,13 @@ public class Cellpose2D {
     public static class Builder {
 
         private final String modelPath;
+        private final CellposeOptions cellposeOptions;
         private ColorTransform[] channels = new ColorTransform[0];
 
         private double maskThreshold = 0.0;
         private double flowThreshold = 0.4;
         private double diameter = 30;
 
-        private double simplifyDistance = 1.4;
         private double cellExpansion = Double.NaN;
         private double cellConstrainScale = Double.NaN;
         private boolean ignoreCellOverlaps = false;
@@ -578,6 +557,8 @@ public class Cellpose2D {
         private Builder(String modelPath) {
             this.modelPath = modelPath;
             this.ops.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
+            this.cellposeOptions = CellposeOptions.getInstance();
+
         }
 
         /**
@@ -793,9 +774,12 @@ public class Cellpose2D {
          * @return this builder
          */
         public Builder useOmnipose() {
-            this.useOmnipose = true;
-            return this;
-
+            if( this.cellposeOptions.getVersion().equals(CellposeOptions.CellposeVersion.OMNIPOSE) ) {
+                this.useOmnipose = true;
+            } else {
+                logger.warn("--omni flag not available in {}", CellposeOptions.CellposeVersion.CELLPOSE);
+            }
+                return this;
         }
 
         /**
@@ -804,7 +788,11 @@ public class Cellpose2D {
          * @return this builder
          */
         public Builder excludeEdges() {
-            this.excludeEdges = true;
+            if( this.cellposeOptions.getVersion().equals(CellposeOptions.CellposeVersion.OMNIPOSE) ) {
+                this.excludeEdges = true;
+            } else {
+                logger.warn("--exclude_edges flag not available in {}", CellposeOptions.CellposeVersion.CELLPOSE);
+            }
             return this;
         }
 
@@ -814,22 +802,11 @@ public class Cellpose2D {
          * @return this builder
          */
         public Builder clusterDBSCAN() {
-            this.doCluster = true;
-            return this;
-        }
-
-        /**
-         * Customize the extent to which contours are simplified.
-         * Simplification reduces the number of vertices, which in turn can reduce memory requirements and
-         * improve performance.
-         * <p>
-         * Implementation note: this currently uses the Visvalingam-Whyatt algorithm.
-         *
-         * @param distance simplify distance threshold; set &le; 0 to turn off additional simplification
-         * @return this builder
-         */
-        public Builder simplify(double distance) {
-            this.simplifyDistance = distance;
+            if( this.cellposeOptions.getVersion().equals(CellposeOptions.CellposeVersion.OMNIPOSE) ) {
+                this.doCluster = true;
+            } else {
+                logger.warn("--cluster flag not available in {}", CellposeOptions.CellposeVersion.CELLPOSE);
+            }
             return this;
         }
 
@@ -839,7 +816,7 @@ public class Cellpose2D {
          * <p>
          * Implementation note: this currently uses the Visvalingam-Whyatt algorithm.
          *
-         * @param iouThreshold simplify distance threshold; set &le; 0 to turn off additional simplification
+         * @param iouThreshold distance threshold; set &le; 0 to turn off additional simplification
          * @return this builder
          */
         public Builder iou(double iouThreshold) {
@@ -999,7 +976,7 @@ public class Cellpose2D {
             }
 
             cellpose.model = modelPath;
-
+            cellpose.cellposeOptions = cellposeOptions;
 
             // Add all operations (preprocessing, channel extraction and normalization)
             mergedOps.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
@@ -1035,7 +1012,6 @@ public class Cellpose2D {
             cellpose.tileHeight = tileHeight;
             cellpose.ignoreCellOverlaps = ignoreCellOverlaps;
             cellpose.measureShape = measureShape;
-            cellpose.simplifyDistance = simplifyDistance;
             cellpose.constrainToParent = constrainToParent;
             cellpose.creatorFun = creatorFun;
             cellpose.globalPathClass = globalPathClass;
