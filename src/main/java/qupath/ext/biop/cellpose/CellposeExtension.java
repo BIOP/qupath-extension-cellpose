@@ -15,6 +15,7 @@ import qupath.lib.gui.panes.PreferencePane;
 import qupath.lib.gui.prefs.PathPrefs;
 
 import qupath.ext.biop.cmd.VirtualEnvironmentRunner.EnvType;
+import qupath.ext.biop.cellpose.CellposeSetup.CellposeVersion;
 
 /**
  * Install Cellpose as an extension.
@@ -36,34 +37,36 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
     public void installExtension(QuPathGUI qupath) {
 
         // Get a copy of the cellpose options
-        CellposeOptions options = CellposeOptions.getInstance();
+        CellposeSetup options = CellposeSetup.getInstance();
 
         // Create the options we need
         ObjectProperty<EnvType> envType = PathPrefs.createPersistentPreference("cellposeEnvType", EnvType.CONDA, EnvType.class);
+        ObjectProperty<CellposeVersion> version = PathPrefs.createPersistentPreference("cellposeVersion",CellposeVersion.CELLPOSE, CellposeVersion.class);
         StringProperty envPath = PathPrefs.createPersistentPreference("cellposeEnvPath", "");
-        BooleanProperty useGPU = PathPrefs.createPersistentPreference("cellposeUseGPU", false);
 
         //Set options to current values
         options.setEnvironmentType(envType.get());
-        options.setEnvironmentNameorPath(envPath.get());
-        options.useGPU(useGPU.get());
+        options.setVersion(version.get());
+        options.setEnvironmentNameOrPath(envPath.get());
 
         // Listen for property changes
         envType.addListener((v,o,n) -> options.setEnvironmentType(n));
-        envPath.addListener((v,o,n) -> options.setEnvironmentNameorPath(n));
-        useGPU.addListener((v,o,n) -> options.useGPU(n));
+        version.addListener((v,o,n) -> options.setVersion(n));
+        envPath.addListener((v,o,n) -> options.setEnvironmentNameOrPath(n));
 
         // Add Permanent Preferences and Populate Preferences
         PreferencePane prefs = QuPathGUI.getInstance().getPreferencePane();
 
         prefs.addPropertyPreference(envPath, String.class, "Cellpose Environment name or directory", "Cellpose",
                 "Enter either the directory where your chosen Cellpose virtual environment (conda or venv) is located. Or the name of the conda environment you created.");
+        prefs.addChoicePropertyPreference(version,
+                FXCollections.observableArrayList(CellposeVersion.values()),
+                CellposeVersion.class,"Cellpose Version", "Cellpose",
+                "This will have an effect on the flags that can be sent to the Cellpose command.");
         prefs.addChoicePropertyPreference(envType,
                 FXCollections.observableArrayList(VirtualEnvironmentRunner.EnvType.values()),
                 VirtualEnvironmentRunner.EnvType.class,"Cellpose Environment Type", "Cellpose",
                 "This changes how the environment is started.");
-        prefs.addPropertyPreference(useGPU, Boolean.class,"Use GPU", "Cellpose",
-                "Use the GPU when calling Cellpose");
     }
 
     @Override
@@ -83,6 +86,6 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
     @Override
     public Version getVersion() {
-        return Version.parse("0.2.0");
+        return Version.parse("0.3.0");
     }
 }

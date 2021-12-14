@@ -24,25 +24,27 @@ import org.bytedeco.opencv.opencv_core.Mat;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.index.strtree.STRtree;
-import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.biop.cmd.VirtualEnvironmentRunner;
 import qupath.lib.analysis.features.ObjectMeasurements;
-import qupath.lib.analysis.features.ObjectMeasurements.Compartments;
-import qupath.lib.analysis.features.ObjectMeasurements.Measurements;
 import qupath.lib.analysis.images.ContourTracing;
+import qupath.lib.common.ColorTools;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.geom.ImmutableDimension;
 import qupath.lib.images.ImageData;
-import qupath.lib.images.servers.*;
-import qupath.lib.images.servers.ColorTransforms.ColorTransform;
+import qupath.lib.images.servers.ImageServer;
+import qupath.lib.images.servers.LabeledImageServer;
+import qupath.lib.images.servers.PixelCalibration;
+import qupath.lib.images.servers.TransformedServerBuilder;
+import qupath.lib.images.writers.ImageWriterTools;
 import qupath.lib.objects.CellTools;
 import qupath.lib.objects.PathCellObject;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.classes.PathClassFactory;
+import qupath.lib.projects.Project;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.GeometryTools;
@@ -50,7 +52,6 @@ import qupath.lib.roi.RoiTools;
 import qupath.lib.roi.interfaces.ROI;
 import qupath.lib.scripting.QP;
 import qupath.opencv.ops.ImageDataOp;
-import qupath.opencv.ops.ImageOp;
 import qupath.opencv.ops.ImageOps;
 import qupath.opencv.tools.OpenCVTools;
 
@@ -58,6 +59,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -80,33 +82,42 @@ import java.util.stream.Collectors;
 public class Cellpose2D {
 
     private final static Logger logger = LoggerFactory.getLogger(Cellpose2D.class);
-    private int channel1;
-    private int channel2;
-    private double iouThreshold = 0.1;
-    private double simplifyDistance = 1.4;
-    private double maskThreshold;
-    private double flowThreshold;
-    private File cellposeTempFolder;
-    private String model;
-    private double diameter;
-    private ImageDataOp op;
-    private double pixelSize;
-    private double cellExpansion;
-    private double cellConstrainScale;
-    private boolean ignoreCellOverlaps;
-    private Function<ROI, PathObject> creatorFun;
-    private PathClass globalPathClass;
-    private boolean constrainToParent = true;
-    private int tileWidth = 1024;
-    private int tileHeight = 1024;
-    private int overlap;
-    private boolean measureShape = false;
-    private Collection<ObjectMeasurements.Compartments> compartments;
-    private Collection<ObjectMeasurements.Measurements> measurements;
-    private boolean invert;
-    private boolean useOmnipose=false;
-    private boolean excludeEdges = false;
-    private boolean doCluster = false;
+
+    protected Integer channel1 = 0;
+    protected Integer channel2 = 0;
+    protected Double iouThreshold = 0.1;
+    protected Double maskThreshold = 0.0;
+    protected Double flowThreshold = 0.0;
+    protected String model = null;
+    protected Double diameter = 0.0;
+    protected ImageDataOp op = null;
+    protected Double pixelSize = null;
+    protected Double cellExpansion = 0.0;
+    protected Double cellConstrainScale = 1.5;
+    protected Boolean ignoreCellOverlaps = Boolean.FALSE;
+    protected Function<ROI, PathObject> creatorFun;
+    protected PathClass globalPathClass;
+    protected Boolean constrainToParent = Boolean.TRUE;
+    protected Integer tileWidth = 1024;
+    protected Integer tileHeight = 1024;
+    protected Integer overlap = null;
+    protected Boolean measureShape = Boolean.FALSE;
+    protected Collection<ObjectMeasurements.Compartments> compartments;
+    protected Collection<ObjectMeasurements.Measurements> measurements;
+    protected Boolean invert = Boolean.FALSE;
+    protected Boolean useOmnipose = Boolean.FALSE;
+    protected Boolean excludeEdges = Boolean.FALSE;
+    protected Boolean doCluster = Boolean.FALSE;
+    // Training parameters
+    protected File modelDirectory = null;
+    protected File trainDirectory = null;
+    protected File valDirectory = null;
+    protected Integer nEpochs = null;
+    public Double learningRate = null;
+    public Integer batchSize = null;
+    protected CellposeSetup cellposeSetup = CellposeSetup.getInstance();
+    protected Boolean useGPU = Boolean.FALSE;
+    private File cellposeTempFolder = null;
 
     /**
      * Create a builder to customize detection parameters.
@@ -116,8 +127,19 @@ public class Cellpose2D {
      * @param modelPath name or path to model to use for prediction.
      * @return this builder
      */
-    public static Builder builder(String modelPath) {
-        return new Builder(modelPath);
+    public static CellposeBuilder builder(String modelPath) {
+        return new CellposeBuilder(modelPath);
+    }
+
+    /**
+     * Load a previouslt serialized builder.
+     * See {@link CellposeBuilder#CellposeBuilder(File)} and {@link CellposeBuilder#saveBuilder(String)}
+     *
+     * @param builderPath path to the builder JSON file.
+     * @return this builder
+     */
+    public static CellposeBuilder builder(File builderPath) {
+        return new CellposeBuilder(builderPath);
     }
 
     // Convenience method to convert a PathObject to cells, taken verbatim from StarDist2D
@@ -213,7 +235,7 @@ public class Cellpose2D {
 
         // Here the files are saved, and we can run cellpose.
         try {
-            runCellPose();
+            runCellpose();
         } catch (IOException | InterruptedException e) {
             logger.error("Failed to Run Cellpose", e);
         }
@@ -232,9 +254,6 @@ public class Cellpose2D {
 
                         // thank you Pete for the ContourTracing Class
                         List<PathObject> detections = ContourTracing.labelsToDetections(maskFile.toPath(), tilefile.getTile());
-
-                        //simplify them
-                        detections = detections.parallelStream().map(d -> PathObjects.createDetectionObject(GeometryTools.geometryToROI(simplify(d.getROI().getGeometry()), d.getROI().getImagePlane()), d.getPathClass())).collect(Collectors.toList());
 
                         allDetections.addAll(detections);
                     } catch (IOException e) {
@@ -316,13 +335,12 @@ public class Cellpose2D {
     }
 
     private PathObject convertToObject(PathObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
-        var geomNucleus = simplify(object.getROI().getGeometry());
+        var geomNucleus = object.getROI().getGeometry();
         PathObject pathObject;
         if (cellExpansion > 0) {
             var geomCell = CellTools.estimateCellBoundary(geomNucleus, cellExpansion, cellConstrainScale);
             if (mask != null)
                 geomCell = GeometryTools.attemptOperation(geomCell, g -> g.intersection(mask));
-            geomCell = simplify(geomCell);
 
             if (geomCell.isEmpty()) {
                 logger.warn("Empty cell boundary at {} will be skipped", object.getROI().getGeometry().getCentroid());
@@ -406,14 +424,12 @@ public class Cellpose2D {
                     Geometry union = detection.getROI().getGeometry().union(nuc2.getROI().getGeometry());
                     double iou = intersection.getArea() / union.getArea();
 
-                    // Get the difference between the two. In case the result is smaller than half the area of the largest object, remove it
-                    // Or if it exceeds the allowed IoU threshold
-                    Geometry difference = nuc2.getROI().getGeometry().difference(detection.getROI().getGeometry());
-
+                    // If the intersection area is close to that of nuc2, then nuc2 is almost contained inside the first object
+                    // CAREFUL, as this uses already simplified shapes, the result will be different with and without simplifications
                     if (envelope.intersects(env) && detection.getROI().getGeometry().intersects(nuc2.getROI().getGeometry())) {
-                         if( iou > this.iouThreshold || difference.getArea() < detection.getROI().getGeometry().getArea() / 2.0 ) {
-                             skippedDetections.add(nuc2);
-                         }
+                        if (iou > this.iouThreshold || intersection.getArea() / nuc2.getROI().getGeometry().getArea() > 0.9) {
+                            skippedDetections.add(nuc2);
+                        }
                     }
                 } catch (Exception e) {
                     skippedDetections.add(nuc2);
@@ -424,7 +440,7 @@ public class Cellpose2D {
         }
         if (skipErrorCount > 0) {
             int skipCount = skippedDetections.size();
-            logger.warn("Skipped {} nucleus detection(s) due to error in resolving overlaps ({}% of all skipped)",
+            logger.warn("Skipped {} detection(s) due to error in resolving overlaps ({}% of all skipped)",
                     skipErrorCount, GeneralTools.formatNumber(skipErrorCount * 100.0 / skipCount, 1));
         }
         return new ArrayList<>(detections);
@@ -458,18 +474,6 @@ public class Cellpose2D {
         return new TileFile(request, tempFile);
     }
 
-    /**
-     * Taken verbatim from StarDist VW simplifier
-     */
-    private Geometry simplify(Geometry geom) {
-        if (simplifyDistance <= 0)
-            return geom;
-        try {
-            return VWSimplifier.simplify(geom, simplifyDistance);
-        } catch (Exception e) {
-            return geom;
-        }
-    }
 
     /**
      * This class actually runs Cellpose by calling the virtual environment
@@ -477,13 +481,10 @@ public class Cellpose2D {
      * @throws IOException          Exception in case files could not be read
      * @throws InterruptedException Exception in case of command thread has some failing
      */
-    private void runCellPose() throws IOException, InterruptedException {
-
-        // Get options
-        CellposeOptions cellposeOptions = CellposeOptions.getInstance();
+    private void runCellpose() throws IOException, InterruptedException {
 
         // Create command to run
-        VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeOptions.getEnvironmentNameorPath(), cellposeOptions.getEnvironmentType());
+        VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeSetup.getEnvironmentNameOrPath(), cellposeSetup.getEnvironmentType());
 
         // This is the list of commands after the 'python' call
         List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-W", "ignore", "-m", "cellpose"));
@@ -500,14 +501,29 @@ public class Cellpose2D {
         cellposeArguments.add("--chan2");
         cellposeArguments.add("" + channel2);
 
-        cellposeArguments.add("--diameter");
-        cellposeArguments.add("" + diameter);
+        if(!diameter.isNaN()) {
+            cellposeArguments.add("--diameter");
+            cellposeArguments.add("" + diameter);
+        }
 
-        cellposeArguments.add("--flow_threshold");
-        cellposeArguments.add("" + flowThreshold);
+        if(!flowThreshold.isNaN()) {
+            cellposeArguments.add("--flow_threshold");
+            cellposeArguments.add("" + flowThreshold);
+        }
 
-        cellposeArguments.add("--" + "mask_threshold");
-        cellposeArguments.add("" + maskThreshold);
+        if(!maskThreshold.isNaN()) {
+            if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE))
+                cellposeArguments.add("--mask_threshold");
+            else cellposeArguments.add("--cellprob_threshold");
+
+            cellposeArguments.add("" + maskThreshold);
+        }
+
+        if (useOmnipose) cellposeArguments.add("--omni");
+        if (doCluster) cellposeArguments.add("--cluster");
+        if (excludeEdges) cellposeArguments.add("--exclude_on_edges");
+
+        if (invert) cellposeArguments.add("--invert");
 
         cellposeArguments.add("--save_tif");
 
@@ -515,14 +531,82 @@ public class Cellpose2D {
 
         cellposeArguments.add("--resample");
 
-        if(useOmnipose) cellposeArguments.add("--omni");
-        if(doCluster) cellposeArguments.add("--cluster");
-        if(excludeEdges) cellposeArguments.add("--exclude_on_edges");
-        
+        if (useGPU) cellposeArguments.add("--use_gpu");
+
+        veRunner.setArguments(cellposeArguments);
+
+        // Finally, we can run Cellpose
+        veRunner.runCommand();
+
+        logger.info("Cellpose command finished running");
+    }
+
+    public File train() {
+
+        try {
+            saveTrainingImages();
+            runCellposeTraining();
+            return moveAndReturnModelFile();
+
+        } catch (IOException | InterruptedException e) {
+            logger.error(e.getMessage(), e);
+        }
+        return null;
+    }
+
+    private void runCellposeTraining() throws IOException, InterruptedException {
+
+        //python -m cellpose --train --dir ~/images_cyto/train/ --test_dir ~/images_cyto/test/ --pretrained_model cyto --chan 2 --chan2 1
+
+        // Create command to run
+        VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeSetup.getEnvironmentNameOrPath(), cellposeSetup.getEnvironmentType());
+
+        // This is the list of commands after the 'python' call
+
+        List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-W", "ignore", "-m", "cellpose"));
+
+        cellposeArguments.add("--train");
+
+        cellposeArguments.add("--dir");
+        cellposeArguments.add("" + trainDirectory.getAbsolutePath());
+        cellposeArguments.add("--test_dir");
+        cellposeArguments.add("" + valDirectory.getAbsolutePath());
+
+        cellposeArguments.add("--pretrained_model");
+        if (model != null) {
+            cellposeArguments.add("" + model);
+        } else {
+            cellposeArguments.add("None");
+        }
+
+        // The channel order will always be 1 and 2, in the order defined by channels(...) in the builder
+        cellposeArguments.add("--chan");
+        cellposeArguments.add("" + channel1);
+        cellposeArguments.add("--chan2");
+        cellposeArguments.add("" + channel2);
+
+        cellposeArguments.add("--diameter");
+        cellposeArguments.add("" + diameter);
+
+        if( nEpochs !=null ) {
+            cellposeArguments.add("--n_epochs");
+            cellposeArguments.add("" + nEpochs);
+        }
+
+        if( !learningRate.isNaN() ) {
+            cellposeArguments.add("--learning_rate");
+            cellposeArguments.add(""+learningRate);
+        }
+
+        if ( batchSize != null ) {
+            cellposeArguments.add("--batch_size");
+            cellposeArguments.add(""+batchSize);
+        }
+
         if (invert) cellposeArguments.add("--invert");
+        if (useOmnipose) cellposeArguments.add("--omni");
 
-
-        if (cellposeOptions.useGPU()) cellposeArguments.add("--use_gpu");
+        if (useGPU) cellposeArguments.add("--use_gpu");
 
         veRunner.setArguments(cellposeArguments);
 
@@ -533,525 +617,114 @@ public class Cellpose2D {
     }
 
     /**
-     * Builder to help create a {@link Cellpose2D} with custom parameters.
+     * Saves the the images from two servers (typically a server with the original data and another with labels)
+     * to the right directories as image/mask pairs, ready for cellpose
+     *
+     * @param annotations    the annotations in which to create RegionRequests to save
+     * @param imageName      thge desired name of the images (the position of the request will be appended to make them unique)
+     * @param originalServer the server that will contain the images
+     * @param labelServer    the server that contains the labels
+     * @param saveDirectory  the location where to save the pair of images
      */
-    public static class Builder {
+    private void saveImagePairs(List<PathObject> annotations, String imageName, ImageServer<BufferedImage> originalServer, ImageServer<BufferedImage> labelServer, File saveDirectory) {
 
-        private final String modelPath;
-        private ColorTransform[] channels = new ColorTransform[0];
-
-        private double maskThreshold = 0.0;
-        private double flowThreshold = 0.4;
-        private double diameter = 30;
-
-        private double simplifyDistance = 1.4;
-        private double cellExpansion = Double.NaN;
-        private double cellConstrainScale = Double.NaN;
-        private boolean ignoreCellOverlaps = false;
-
-        private double pixelSize = Double.NaN;
-
-        private int tileWidth = 1024;
-        private int tileHeight = 1024;
-
-        private Function<ROI, PathObject> creatorFun;
-
-        private PathClass globalPathClass;
-
-        private boolean measureShape = false;
-        private Collection<Compartments> compartments = Arrays.asList(Compartments.values());
-        private Collection<Measurements> measurements;
-
-        private boolean constrainToParent = true;
-
-        private final List<ImageOp> ops = new ArrayList<>();
-        private double iouThreshold = 0.1;
-
-        private int channel1 = 0; //GRAY
-        private int channel2 = 0; // NONE
-        private boolean isInvert = false;
-
-        private boolean useOmnipose = false;
-        private boolean excludeEdges = false;
-        private boolean doCluster = false;
-
-        private Builder(String modelPath) {
-            this.modelPath = modelPath;
-            this.ops.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
+        if (annotations.isEmpty()) {
+            return;
+        }
+        int downsample = 1;
+        if (Double.isFinite(pixelSize) && pixelSize > 0) {
+            downsample = (int) Math.round(pixelSize / originalServer.getPixelCalibration().getAveragedPixelSize().doubleValue());
         }
 
-        /**
-         * Resolution at which the cell detection should be run.
-         * The units depend upon the {@link PixelCalibration} of the input image.
-         * <p>
-         * The default is to use the full resolution of the input image.
-         * <p>
-         * For an image calibrated in microns, the recommended default is approximately 0.5.
-         *
-         * @param pixelSize Pixel size in microns for the analysis
-         * @return this builder
-         */
-        public Builder pixelSize(double pixelSize) {
-            this.pixelSize = pixelSize;
-            return this;
-        }
+        AtomicInteger idx = new AtomicInteger();
+        int finalDownsample = downsample;
 
-        /**
-         * Specify channels. Useful for detecting nuclei for one channel
-         * within a multi-channel image, or potentially for trained models that
-         * support multi-channel input.
-         *
-         * @param channels 0-based indices of the channels to use
-         * @return this builder
-         */
-        public Builder channels(int... channels) {
-            return channels(Arrays.stream(channels)
-                    .mapToObj(ColorTransforms::createChannelExtractor)
-                    .toArray(ColorTransform[]::new));
-        }
+        logger.info("Saving Images...");
+        annotations.forEach(a -> {
+            int i = idx.getAndIncrement();
 
-        /**
-         * Specify channels by name. Useful for detecting nuclei for one channel
-         * within a multi-channel image, or potentially for trained models that
-         * support multi-channel input.
-         *
-         * @param channels 0-based indices of the channels to use
-         * @return this builder
-         */
-        public Builder channels(String... channels) {
-            return channels(Arrays.stream(channels)
-                    .map(ColorTransforms::createChannelExtractor)
-                    .toArray(ColorTransform[]::new));
-        }
+            RegionRequest request = RegionRequest.createInstance(originalServer.getPath(), finalDownsample, a.getROI());
+            File imageFile = new File(saveDirectory, imageName + "_region_" + i + ".tif");
+            File maskFile = new File(saveDirectory, imageName + "_region_" + i + "_masks.tif");
+            try {
 
-        /**
-         * Define the channels (or color transformers) to apply to the input image.
-         * <p>
-         * This makes it possible to supply color deconvolved channels, for example.
-         *
-         * @param channels ColorTransform channels to use, typically only used internally
-         * @return this builder
-         */
-        public Builder channels(ColorTransform... channels) {
-            this.channels = channels.clone();
-            if (this.channels.length >= 2) {
-                this.channel1 = 1;
-                this.channel2 = 2;
+                ImageWriterTools.writeImageRegion(originalServer, request, imageFile.getAbsolutePath());
+                ImageWriterTools.writeImageRegion(labelServer, request, maskFile.getAbsolutePath());
+
+            } catch (IOException ex) {
+                logger.error(ex.getMessage());
             }
-            return this;
-        }
+        });
+    }
 
-        /**
-         * Add preprocessing operations, if required.
-         *
-         * @param ops series of ImageOps to apply to this server before saving the images
-         * @return this builder
-         */
-        public Builder preprocess(ImageOp... ops) {
-            Collections.addAll(this.ops, ops);
-            return this;
-        }
+    /**
+     * Save training images for the project
+     *
+     * @throws IOException an error in case the images cannot be saved
+     */
+    private void saveTrainingImages() throws IOException {
 
-        /**
-         * Apply percentile normalization to the input image channels.
-         * <p>
-         * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
-         * in which case the order in which the operations are applied depends upon the order
-         * in which the methods of the builder are called.
-         * <p>
-         * Warning! This is applied on a per-tile basis. This can result in artifacts and false detections
-         * without background/constant regions.
-         * Consider using {@link #inputAdd(double...)} and {@link #inputScale(double...)} as alternative
-         * normalization strategies, if appropriate constants can be determined to apply globally.
-         *
-         * @param min minimum percentile
-         * @param max maximum percentile
-         * @return this builder
-         */
-        public Builder normalizePercentiles(double min, double max) {
-            this.ops.add(ImageOps.Normalize.percentile(min, max));
-            return this;
-        }
+        Project<BufferedImage> project = QP.getProject();
+        // Prepare location to save images
 
-        /**
-         * Add an offset as a preprocessing step.
-         * Usually the value will be negative. Along with {@link #inputScale(double...)} this can be used as an alternative (global) normalization.
-         * <p>
-         * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
-         * in which case the order in which the operations are applied depends upon the order
-         * in which the methods of the builder are called.
-         *
-         * @param values either a single value to add to all channels, or an array of values equal to the number of channels
-         * @return this builder
-         */
-        public Builder inputAdd(double... values) {
-            this.ops.add(ImageOps.Core.add(values));
-            return this;
-        }
+        project.getImageList().parallelStream().forEach(e -> {
 
-        /**
-         * Multiply by a scale factor as a preprocessing step.
-         * Along with {@link #inputAdd(double...)} this can be used as an alternative (global) normalization.
-         * <p>
-         * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
-         * in which case the order in which the operations are applied depends upon the order
-         * in which the methods of the builder are called.
-         *
-         * @param values either a single value to add to all channels, or an array of values equal to the number of channels
-         * @return this builder
-         */
-        public Builder inputScale(double... values) {
-            this.ops.add(ImageOps.Core.subtract(values));
-            return this;
-        }
+            ImageData<BufferedImage> imageData;
+            try {
+                imageData = e.readImageData();
+                String imageName = GeneralTools.getNameWithoutExtension(imageData.getServer().getMetadata().getName());
 
-        /**
-         * Size in pixels of a tile used for detection.
-         * Note that tiles are independently normalized, and therefore tiling can impact
-         * the results. Default is 1024.
-         *
-         * @param tileSize if the regions must be broken down, how large should the tiles be, in pixels (width and height)
-         * @return this builder
-         */
-        public Builder tileSize(int tileSize) {
-            return tileSize(tileSize, tileSize);
-        }
+                // Make the server using the required ops
+                ImageServer<BufferedImage> processed = ImageOps.buildServer(imageData, op, imageData.getServer().getPixelCalibration(), 2048, 2048);
 
-        /**
-         * Size in pixels of a tile used for detection.
-         * Note that tiles are independently normalized, and therefore tiling can impact
-         * the results. Default is 1024.
-         *
-         * @param tileWidth if the regions must be broken down, how large should the tiles be (width), in pixels
-         * @param tileHeight if the regions must be broken down, how large should the tiles be (height), in pixels
-         * @return this builder
-         */
-        public Builder tileSize(int tileWidth, int tileHeight) {
-            this.tileWidth = tileWidth;
-            this.tileHeight = tileHeight;
-            return this;
-        }
+                Collection<PathObject> allAnnotations = imageData.getHierarchy().getAnnotationObjects();
+                // Get Squares for Training
+                List<PathObject> trainingAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Training")).collect(Collectors.toList());
+                List<PathObject> validationAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Validation")).collect(Collectors.toList());
 
-        /**
-         * Sets the channels to use by cellpose, in case there is an issue with the order or the number of exported channels
-         * @param channel1 the main channel
-         * @param channel2 the second channel (typically nuclei)
-         * @return this builder
-         */
-        public Builder cellposeChannels(int channel1, int channel2) {
-            this.channel1 = channel1;
-            this.channel2 = channel2;
-            return this;
-        }
+                logger.info("Found {} Training objects and {} Validation Objects in image {}", trainingAnnotations.size(), validationAnnotations.size(), imageName);
 
-        /**
-         * Probability threshold to apply for detection, between 0 and 1.
-         *
-         * @param threshold probability threshold between 0 and 1 (default 0.5)
-         * @return this builder
-         */
-        public Builder maskThreshold(double threshold) {
-            this.maskThreshold = threshold;
-            return this;
-        }
+                LabeledImageServer labelServer = new LabeledImageServer.Builder(imageData)
+                        .backgroundLabel(0, ColorTools.BLACK)
+                        .multichannelOutput(false)
+                        .useInstanceLabels()
+                        .useFilter(o -> o.getPathClass() == null) // Keep only objects with no PathClass
+                        .build();
 
-        /**
-         * Flow threshold to apply for detection, between 0 and 1.
-         *
-         * @param threshold flow threshold (default 0.0)
-         * @return this builder
-         */
-        public Builder flowThreshold(double threshold) {
-            this.flowThreshold = threshold;
-            return this;
-        }
-
-        /**
-         * The extimated diameter of the objects to detect. Cellpose will further downsample the images in order to match
-         * their expected diameter
-         *
-         * @param diameter in pixels
-         * @return this builder
-         */
-        public Builder diameter(double diameter) {
-            this.diameter = diameter;
-            return this;
-        }
-
-        /**
-         * Inverts the image channels within cellpose. Adds the --invert flag to the command
-         * @return this builder
-         */
-        public Builder invert() {
-            this.isInvert = true;
-            return this;
-        }
-
-        /**
-         * Use Omnipose implementation: Adds --omni flag to command
-         *
-         * @return this builder
-         */
-        public Builder useOmnipose() {
-            this.useOmnipose = true;
-            return this;
-
-        }
-
-        /**
-         * Exclude on edges. Adds --exclude_on_edges flag to command
-         *
-         * @return this builder
-         */
-        public Builder excludeEdges() {
-            this.excludeEdges = true;
-            return this;
-        }
-
-        /**
-         * DBSCAN clustering. Reduces oversegmentation of thin features, adds --cluster flag to command.
-         *
-         * @return this builder
-         */
-        public Builder clusterDBSCAN() {
-            this.doCluster = true;
-            return this;
-        }
-
-        /**
-         * Customize the extent to which contours are simplified.
-         * Simplification reduces the number of vertices, which in turn can reduce memory requirements and
-         * improve performance.
-         * <p>
-         * Implementation note: this currently uses the Visvalingam-Whyatt algorithm.
-         *
-         * @param distance simplify distance threshold; set &le; 0 to turn off additional simplification
-         * @return this builder
-         */
-        public Builder simplify(double distance) {
-            this.simplifyDistance = distance;
-            return this;
-        }
-
-        /**
-         * Select the Intersection over Union (IoU) cutoff for excluding overlapping detections.
-         * Default of 0.1 is good enough
-         * <p>
-         * Implementation note: this currently uses the Visvalingam-Whyatt algorithm.
-         *
-         * @param iouThreshold simplify distance threshold; set &le; 0 to turn off additional simplification
-         * @return this builder
-         */
-        public Builder iou(double iouThreshold) {
-            this.iouThreshold = iouThreshold;
-            return this;
-        }
-
-        /**
-         * Amount by which to expand detected nuclei to approximate the cell area.
-         * Units are the same as for the {@link PixelCalibration} of the input image.
-         * <p>
-         * Warning! This is rather experimental, relying heavily on JTS and a convoluted method of
-         * resolving overlaps using a Voronoi tessellation.
-         * <p>
-         * In short, be wary.
-         *
-         * @param distance cell expansion distance in microns
-         * @return this builder
-         */
-        public Builder cellExpansion(double distance) {
-            this.cellExpansion = distance;
-            return this;
-        }
-
-        /**
-         * Constrain any cell expansion defined using {@link #cellExpansion(double)} based upon
-         * the nucleus size. Only meaningful for values &gt; 1; the nucleus is expanded according
-         * to the scale factor, and used to define the maximum permitted cell expansion.
-         *
-         * @param scale a number to multiply each pixel in the image by
-         * @return this builder
-         */
-        public Builder cellConstrainScale(double scale) {
-            this.cellConstrainScale = scale;
-            return this;
-        }
-
-        /**
-         * Request that a classification is applied to all created objects.
-         *
-         * @param pathClass the PathClass of all detections resulting from this run
-         * @return this builder
-         */
-        public Builder classify(PathClass pathClass) {
-            this.globalPathClass = pathClass;
-            return this;
-        }
-
-        /**
-         * Request that a classification is applied to all created objects.
-         * This is a convenience method that get a {@link PathClass} from  {@link PathClassFactory}.
-         *
-         * @param pathClassName the name of the PathClass for all detections
-         * @return this builder
-         */
-        public Builder classify(String pathClassName) {
-            return classify(PathClassFactory.getPathClass(pathClassName, (Integer) null));
-        }
-
-        /**
-         * If true, ignore overlaps when computing cell expansion.
-         *
-         * @param ignore ignore overlaps when computing cell expansion.
-         * @return this builder
-         */
-        public Builder ignoreCellOverlaps(boolean ignore) {
-            this.ignoreCellOverlaps = ignore;
-            return this;
-        }
-
-        /**
-         * If true, constrain nuclei and cells to any parent annotation (default is true).
-         *
-         * @param constrainToParent constrain nuclei and cells to any parent annotation
-         * @return this builder
-         */
-        public Builder constrainToParent(boolean constrainToParent) {
-            this.constrainToParent = constrainToParent;
-            return this;
-        }
-
-        /**
-         * Create annotations rather than detections (the default).
-         * If cell expansion is not zero, the nucleus will be included as a child object.
-         *
-         * @return this builder
-         */
-        public Builder createAnnotations() {
-            this.creatorFun = PathObjects::createAnnotationObject;
-            return this;
-        }
-
-        /**
-         * Request default intensity measurements are made for all available cell compartments.
-         *
-         * @return this builder
-         */
-        public Builder measureIntensity() {
-            this.measurements = Arrays.asList(
-                    Measurements.MEAN,
-                    Measurements.MEDIAN,
-                    Measurements.MIN,
-                    Measurements.MAX,
-                    Measurements.STD_DEV);
-            return this;
-        }
-
-        /**
-         * Request specified intensity measurements are made for all available cell compartments.
-         *
-         * @param measurements the measurements to make
-         * @return this builder
-         */
-        public Builder measureIntensity(Collection<Measurements> measurements) {
-            this.measurements = new ArrayList<>(measurements);
-            return this;
-        }
-
-        /**
-         * Request shape measurements are made for the detected cell or nucleus.
-         *
-         * @return this builder
-         */
-        public Builder measureShape() {
-            measureShape = true;
-            return this;
-        }
-
-        /**
-         * Specify the compartments within which intensity measurements are made.
-         * Only effective if {@link #measureIntensity()} and {@link #cellExpansion(double)} have been selected.
-         *
-         * @param compartments cell compartments for intensity measurements
-         * @return this builder
-         */
-        public Builder compartments(Compartments... compartments) {
-            this.compartments = Arrays.asList(compartments);
-            return this;
-        }
-
-        /**
-         * Create a {@link Cellpose2D}, all ready for detection.
-         *
-         * @return a CellPose2D object, ready to be run
-         */
-        public Cellpose2D build() {
-
-            // The cellpose class that will run the detections
-            Cellpose2D cellpose = new Cellpose2D();
-
-            ArrayList<ImageOp> mergedOps = new ArrayList<>(ops);
-
-            // Check the model. If it is a file, then it is a custom model
-            File file = new File(modelPath);
-            if (file.isFile()) {
-                logger.info("Provided model {} is a file. Assuming custom model", file);
+                saveImagePairs(trainingAnnotations, imageName, processed, labelServer, trainDirectory);
+                saveImagePairs(validationAnnotations, imageName, processed, labelServer, valDirectory);
+            } catch (Exception ex) {
+                logger.error(ex.getMessage());
             }
-
-            cellpose.model = modelPath;
-
-
-            // Add all operations (preprocessing, channel extraction and normalization)
-            mergedOps.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
-
-            // Ensure there are only 2 channels at most
-            if (channels.length > 2) {
-                logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two", channels.length);
-                channels = Arrays.copyOf(channels, 2);
-            }
-            cellpose.op = ImageOps.buildImageDataOp(channels).appendOps(mergedOps.toArray(ImageOp[]::new));
-
-            // CellPose accepts either one or two channels. This will help the final command
-            cellpose.channel1 = channel1;
-            cellpose.channel2 = channel2;
-            cellpose.maskThreshold = maskThreshold;
-            cellpose.flowThreshold = flowThreshold;
-            cellpose.pixelSize = pixelSize;
-            cellpose.diameter = diameter;
-            cellpose.invert = isInvert;
-            cellpose.doCluster = doCluster;
-            cellpose.excludeEdges = excludeEdges;
-            cellpose.useOmnipose = useOmnipose;
-
-            // Overlap for segmentation of tiles. Should be large enough that any object must be "complete"
-            // in at least one tile for resolving overlaps
-            cellpose.overlap = (int) Math.round(2 * diameter);
-
-            // Intersection over union threshold to deal with duplicates
-            cellpose.iouThreshold = iouThreshold;
-            cellpose.cellConstrainScale = cellConstrainScale;
-            cellpose.cellExpansion = cellExpansion;
-            cellpose.tileWidth = tileWidth;
-            cellpose.tileHeight = tileHeight;
-            cellpose.ignoreCellOverlaps = ignoreCellOverlaps;
-            cellpose.measureShape = measureShape;
-            cellpose.simplifyDistance = simplifyDistance;
-            cellpose.constrainToParent = constrainToParent;
-            cellpose.creatorFun = creatorFun;
-            cellpose.globalPathClass = globalPathClass;
-
-            cellpose.compartments = new LinkedHashSet<>(compartments);
-
-            if (measurements != null)
-                cellpose.measurements = new LinkedHashSet<>(measurements);
-            else
-                cellpose.measurements = Collections.emptyList();
-
-            return cellpose;
-        }
+        });
 
     }
 
+    /**
+     * Checks the default folder where cellpose drops a trained model (../train/models/)
+     * and moves it to the defined modelDirectory using {@link #modelDirectory}
+     *
+     * @return the File of the moved model
+     * @throws IOException in case there was a problem moving the file
+     */
+    private File moveAndReturnModelFile() throws IOException {
+        File cellPoseModelFolder = new File(trainDirectory, "models");
+        // Find the first file in there
+        File[] all = cellPoseModelFolder.listFiles();
+        Optional<File> cellPoseModel = Arrays.stream(all).filter(f -> f.getName().contains("cellpose")).findFirst();
+        if (cellPoseModel.isPresent()) {
+            logger.info("Found model file at {} ", cellPoseModel);
+            File model = cellPoseModel.get();
+            File newModel = new File(modelDirectory, model.getName());
+            FileUtils.copyFile(model, newModel);
+            return newModel;
+        }
+        return null;
+    }
+
+    /**
+     * Static class to hold the correspondence between a RegionRequest and a saved file, so that we can place the detected ROIs in the right place.
+     */
     private static class TileFile {
         private final RegionRequest request;
         private final File file;
@@ -1070,6 +743,10 @@ public class Cellpose2D {
         }
     }
 
+    /**
+     * Static class that contains all the tiles as {@link TileFile}s for each object
+     * This will allow us to make sure that each object has the right child objects assigned to it after prediction
+     */
     private static class PathTile {
         private final PathObject object;
         private final List<TileFile> tile;
@@ -1087,5 +764,4 @@ public class Cellpose2D {
             return tile;
         }
     }
-
 }

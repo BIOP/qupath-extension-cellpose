@@ -47,14 +47,63 @@ The example below is from a full GPU enabled cellpose installation that was made
 
 In the example provided above for installing cellpose on Mac/Linux, you would enter `/where/you/want/your/cellpose/` and Python VENV as options
 
-## Running
+## Using the Cellpose QuPath Extension
 
-Running Cellpose is done via a script and is very similar to the excellent [QuPath StarDist Extension](https://github.com/qupath/qupath-extension-stardist)
+### Training
+
+**Requirements**:
+A QuPath project with rectangles of class "Training" and "Validation" inside which the ground truth objects have been painted.
+
+We typically create a standalone QuPath project for training only. This project will contain the training images along with the ground truth annotations drawn in QuPath.
+Here are some reasons we do it this way:
+1. Separating training and prediction/analysis makes for clean project structures and easier sharing of the different steps of your workflow.
+2. In case we need to get more ground truth, we can simply fire up the relevant QuPath project and import the newly trained model into any other project that might need it.
+
+**Protocol**
+
+1. In your QuPath project create rectangle annotations, of "Training" and "Validation" classes.
+2. Lock the rectangles (right click > Annotations > Lock). 
+3. Draw your ground truth. You can also run cellpose with `createAnnotations()` in the builder to have a starting ground truth you can manually correct. 
+4. The drawn ground truth annotations must have **no classes**.
+
+After you have saved the project, you can run the Cellpose training in the following way:
 
 ```groovy
 import qupath.ext.biop.cellpose.Cellpose2D
 
-// Specify the model name (cyto, nuc, cyto2 or a path to your custom model)
+def cellpose = Cellpose2D.builder("cyto") // Can choose "None" if you want to train from scratch
+                .channels("DAPI", "CY3")  // or use work with .cellposeChannels( channel1, channel2 ) and follow the cellpose way
+                .preprocess(ImageOps.Filters.gaussianBlur(1)) // Optional preprocessing QuPath Ops 
+                .epochs(500)              // Optional: will default to 500
+                .learningRate(0.2)        // Optional: Will default to 0.2
+                .batchSize(8)             // Optional: Will default to 8
+                .modelDirectory(new File("My/location")) // Optional place to store resulting model. Will default to QuPath project root, and make a 'models' folder 
+
+// Once ready for training you can call the train() method
+// train() will:
+// 1. Go through the current project and save all "Training" and "Validation" regions into a temp folder (inside the current project)
+// 2. Run the cellpose training via command line
+// 3. Recover the model file after training, and copy it to where you defined in the builder, returning the reference to it
+
+def resultModel = cellposeTrainer.train()
+
+println "Model Saved under "+resultModel
+```
+
+**Extra training options:**
+[All options in Cellpose](https://github.com/MouseLand/cellpose/blob/45f1a3c640efb8ca7d252712620af6f58d024c55/cellpose/__main__.py#L36) have not been transferred. 
+In case that this might be of use to you, please [open an issue](https://github.com/BIOP/qupath-extension-cellpose/issues). 
+
+## Prediction 
+
+Running Cellpose is done via a script and is very similar to the excellent [QuPath StarDist Extension](https://github.com/qupath/qupath-extension-stardist)
+
+All builder options are to be found [in the Javadoc](https://biop.github.io/qupath-extension-cellpose/)
+
+```groovy
+import qupath.ext.biop.cellpose.Cellpose2D
+
+// Specify the model name (cyto, nuc, cyto2, omni_bact or a path to your custom model)
 def pathModel = 'cyto'
 
 def cellpose = Cellpose2D.builder( pathModel )
@@ -110,3 +159,8 @@ The output will be under `build/libs`.
 * `clean` removes anything old
 * `build` builds the QuPath extension as a *.jar* file and adds it to `libs`
 
+# Extra notes
+Like the StarDist extension, we provide a normalization option `normalizePercentiles`.
+However. because Cellpose does its own normalization, and QuPath keeps the normalized image in 32-bit with no clipping, there is no effect from using the normalization. 
+
+In case you need your own normalization, you need to [ask Cellpose to implement it or allow to deactivate normalization](https://github.com/MouseLand/cellpose/issues).
