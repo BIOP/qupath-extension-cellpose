@@ -2,10 +2,9 @@ package qupath.ext.biop.cellpose;
 
 import qupath.ext.biop.cmd.VirtualEnvironmentRunner.EnvType;
 
-public class CellposeOptions {
-    private boolean useGPU;
+public class CellposeSetup {
     private EnvType envType;
-    private String environmentNameorPath;
+    private String environmentNameOrPath;
     private CellposeVersion version;
     public enum CellposeVersion {
         CELLPOSE("Cellpose before v0.7.0"),
@@ -21,11 +20,11 @@ public class CellposeOptions {
 
         @Override
         public String toString() {
-            return this.description;
+            return  getDescription();
         }
     }
 
-    private static CellposeOptions instance = new CellposeOptions();
+    private static CellposeSetup instance = new CellposeSetup();
 
     public EnvType getEnvironmentType() {
         return envType;
@@ -38,23 +37,15 @@ public class CellposeOptions {
         this.envType = envType;
     }
 
-    public String getEnvironmentNameorPath() {
-        return environmentNameorPath;
+    public String getEnvironmentNameOrPath() {
+        return environmentNameOrPath;
     }
 
-    public void setEnvironmentNameorPath(String environmentNameorPath) {
-        this.environmentNameorPath = environmentNameorPath;
+    public void setEnvironmentNameOrPath(String environmentNameOrPath) {
+        this.environmentNameOrPath = environmentNameOrPath;
     }
 
-    public boolean useGPU() {
-        return useGPU;
-    }
-
-    public void useGPU(boolean useGPU) {
-        this.useGPU = useGPU;
-    }
-
-    public static CellposeOptions getInstance() {
+    public static CellposeSetup getInstance() {
         return instance;
     }
 }

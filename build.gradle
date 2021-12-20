@@ -26,7 +26,7 @@ ext.moduleName = 'qupath.extension.cellpose'
 
 description = 'QuPath extension to use Cellpose'
 
-version = "0.2.0"
+version = "0.3.0"
 
 dependencies {
     def qupathVersion = "0.3.0" // For now
@@ -69,6 +69,11 @@ java {
 	    withJavadocJar()
 }
 
+javadoc {
+    options.addBooleanOption('html5', true)
+    destinationDir = new File(project.rootDir,"docs")
+}
+
 /*
  * Create javadocs for all modules/packages in one place.
  * Use -PstrictJavadoc=true to fail on error with doclint (which is rather strict).
@@ -79,6 +84,7 @@ if (!strictJavadoc) {
         options.addStringOption('Xdoclint:none', '-quiet')
     }
 }
+
     
 /*
  * Avoid 'Entry .gitkeep is a duplicate but no duplicate handling strategy has been set.'
