@@ -164,3 +164,6 @@ Like the StarDist extension, we provide a normalization option `normalizePercent
 However. because Cellpose does its own normalization, and QuPath keeps the normalized image in 32-bit with no clipping, there is no effect from using the normalization. 
 
 In case you need your own normalization, you need to [ask Cellpose to implement it or allow to deactivate normalization](https://github.com/MouseLand/cellpose/issues).
+
+# Ubuntu Error 13: Permission Denied
+[As per this post here](https://forum.image.sc/t/could-not-execute-system-command-in-qupath-thanks-to-groovy-script-and-java-processbuilder-class/61629/2?u=oburri), there is a permissions issue when using Ubuntu, which does not allow Java's `ProcessBuilder` to run. The current workaround is [to build QuPath from source](https://qupath.readthedocs.io/en/stable/docs/reference/building.html) in Ubuntu, which then allows the use of the `ProcessBuilder`, which is the magic piece of code that actually calls Cellpose.
