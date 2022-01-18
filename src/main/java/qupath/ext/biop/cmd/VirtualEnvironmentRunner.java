@@ -22,7 +22,7 @@ import java.util.List;
 public class VirtualEnvironmentRunner {
     private final static Logger logger = LoggerFactory.getLogger(VirtualEnvironmentRunner.class);
     private final EnvType envType;
-
+    private String name;
     private String environmentNameOrPath;
 
     private List<String> arguments;
@@ -51,9 +51,10 @@ public class VirtualEnvironmentRunner {
         }
     }
 
-    public VirtualEnvironmentRunner(String environmentNameOrPath, EnvType type) {
+    public VirtualEnvironmentRunner(String environmentNameOrPath, EnvType type, String name) {
         this.environmentNameOrPath = environmentNameOrPath;
         this.envType = type;
+        this.name = name;
         if (envType.equals(EnvType.OTHER))
             logger.error("Environment is unknown, please set the environment type to something different than 'Other'");
     }
@@ -144,8 +145,7 @@ public class VirtualEnvironmentRunner {
         logger.info("Executing command: {}", shell.toString().replace(",", ""));
 
         // Now the cmd line is ready
-        ProcessBuilder pb = new ProcessBuilder(shell);
-        pb.redirectErrorStream();
+        ProcessBuilder pb = new ProcessBuilder(shell).redirectErrorStream(true);
         
         // Start the process and follow it throughout
         Process p = pb.start();
@@ -154,10 +154,9 @@ public class VirtualEnvironmentRunner {
             @Override
             public void run() {
                 BufferedReader stdIn = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                String console = "cellpose";
                 try {
                     for (String line = stdIn.readLine(); line != null; ) {
-                        logger.info("{}: {}", console, line);
+                        logger.info("{}: {}", name, line);
                         line = stdIn.readLine();
                     }
                 } catch (IOException e) {
@@ -171,5 +170,11 @@ public class VirtualEnvironmentRunner {
         p.waitFor();
 
         logger.info("Virtual Environment Runner Finished");
+
+        int exitValue = p.exitValue();
+
+        if (exitValue != 0) {
+            logger.error("Runner '{}' exited with value {}. Please check output above for indications of the problem.", name, exitValue);
+        }
     }
 }
