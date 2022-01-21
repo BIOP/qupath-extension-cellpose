@@ -18,6 +18,11 @@ package qupath.ext.biop.cellpose;
 
 import ij.IJ;
 import ij.ImagePlus;
+import ij.measure.ResultsTable;
+import javafx.scene.chart.LineChart;
+import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.XYChart;
+import javafx.scene.control.ButtonType;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.bytedeco.opencv.opencv_core.Mat;
@@ -32,6 +37,7 @@ import qupath.lib.analysis.images.ContourTracing;
 import qupath.lib.common.ColorTools;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.geom.ImmutableDimension;
+import qupath.lib.gui.dialogs.Dialogs;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.ImageServer;
 import qupath.lib.images.servers.LabeledImageServer;
@@ -61,6 +67,8 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -82,7 +90,8 @@ import java.util.stream.Collectors;
 public class Cellpose2D {
 
     private final static Logger logger = LoggerFactory.getLogger(Cellpose2D.class);
-
+    public Double learningRate = null;
+    public Integer batchSize = null;
     protected Integer channel1 = 0;
     protected Integer channel2 = 0;
     protected Double iouThreshold = 0.1;
@@ -113,11 +122,11 @@ public class Cellpose2D {
     protected File trainDirectory = null;
     protected File valDirectory = null;
     protected Integer nEpochs = null;
-    public Double learningRate = null;
-    public Integer batchSize = null;
     protected CellposeSetup cellposeSetup = CellposeSetup.getInstance();
     protected Boolean useGPU = Boolean.FALSE;
     private File cellposeTempFolder = null;
+
+    private String[] theLog;
 
     /**
      * Create a builder to customize detection parameters.
@@ -187,8 +196,9 @@ public class Cellpose2D {
 
         // Define temporary folder to work in
         cellposeTempFolder = new File(QP.buildFilePath(QP.PROJECT_BASE_DIR, "cellpose-temp"));
-        cellposeTempFolder.mkdirs();
-
+        boolean mkdirs = cellposeTempFolder.mkdirs();
+        if (!mkdirs)
+            logger.info("Folder creation of {} was interrupted. Either the folder exists or there was a problem.", cellposeTempFolder);
         try {
             FileUtils.cleanDirectory(cellposeTempFolder);
         } catch (IOException e) {
@@ -501,17 +511,17 @@ public class Cellpose2D {
         cellposeArguments.add("--chan2");
         cellposeArguments.add("" + channel2);
 
-        if(!diameter.isNaN()) {
+        if (!diameter.isNaN()) {
             cellposeArguments.add("--diameter");
             cellposeArguments.add("" + diameter);
         }
 
-        if(!flowThreshold.isNaN()) {
+        if (!flowThreshold.isNaN()) {
             cellposeArguments.add("--flow_threshold");
             cellposeArguments.add("" + flowThreshold);
         }
 
-        if(!maskThreshold.isNaN()) {
+        if (!maskThreshold.isNaN()) {
             if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE))
                 cellposeArguments.add("--mask_threshold");
             else cellposeArguments.add("--cellprob_threshold");
@@ -536,11 +546,18 @@ public class Cellpose2D {
         veRunner.setArguments(cellposeArguments);
 
         // Finally, we can run Cellpose
-        veRunner.runCommand();
+        theLog = veRunner.runCommand();
 
         logger.info("Cellpose command finished running");
     }
 
+    /**
+     * Executes the cellpose training by
+     * 1. Saving the images
+     * 2. running cellpose
+     * 3. moving the resulting model file to the desired directory
+     * @return a link to the model file, which can be displayed
+     */
     public File train() {
 
         try {
@@ -554,12 +571,17 @@ public class Cellpose2D {
         return null;
     }
 
+    /**
+     * Configures and runs the {@link VirtualEnvironmentRunner} that will ultimately run cellpose training
+     * @throws IOException          Exception in case files could not be read
+     * @throws InterruptedException Exception in case of command thread has some failing
+     */
     private void runCellposeTraining() throws IOException, InterruptedException {
 
         //python -m cellpose --train --dir ~/images_cyto/train/ --test_dir ~/images_cyto/test/ --pretrained_model cyto --chan 2 --chan2 1
 
         // Create command to run
-        VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeSetup.getEnvironmentNameOrPath(), cellposeSetup.getEnvironmentType(), this.getClass().getSimpleName()+"-train");
+        VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeSetup.getEnvironmentNameOrPath(), cellposeSetup.getEnvironmentType(), this.getClass().getSimpleName() + "-train");
 
         // This is the list of commands after the 'python' call
 
@@ -588,19 +610,19 @@ public class Cellpose2D {
         cellposeArguments.add("--diameter");
         cellposeArguments.add("" + diameter);
 
-        if( nEpochs !=null ) {
+        if (nEpochs != null) {
             cellposeArguments.add("--n_epochs");
             cellposeArguments.add("" + nEpochs);
         }
 
-        if( !learningRate.isNaN() ) {
+        if (!learningRate.isNaN()) {
             cellposeArguments.add("--learning_rate");
-            cellposeArguments.add(""+learningRate);
+            cellposeArguments.add("" + learningRate);
         }
 
-        if ( batchSize != null ) {
+        if (batchSize != null) {
             cellposeArguments.add("--batch_size");
-            cellposeArguments.add(""+batchSize);
+            cellposeArguments.add("" + batchSize);
         }
 
         if (invert) cellposeArguments.add("--invert");
@@ -611,9 +633,84 @@ public class Cellpose2D {
         veRunner.setArguments(cellposeArguments);
 
         // Finally, we can run Cellpose
-        veRunner.runCommand();
+        theLog = veRunner.runCommand();
 
         logger.info("Cellpose command finished running");
+    }
+
+    /**
+     * Returns the log from running the cellpose command, with any error messages and status updates of the cellpose process
+     * You can use this during training or prediction
+     * @return the entire dump of the cellpose log, each line is one element of the String array.
+     */
+    public String[] getOutputLog() {
+        return theLog;
+    }
+
+    /**
+     * Returns a parsed version of the cellpose log as a ResultsTable with columns
+     * Epoch, Time, Loss, Loss Test and LR
+     * @return an ImageJ ResultsTable that can be displayed with {@link ResultsTable#show(String)}
+     */
+    public ResultsTable getTrainingResults() {
+        ResultsTable cleanLog = new ResultsTable();
+
+        if (this.theLog != null) {
+            // Try to parse the output of Cellpose to give meaningful information to the user. This is very old school
+            // Look for "Epoch 0, Time  2.3s, Loss 1.0758, Loss Test 0.6007, LR 0.2000"
+            String epochPattern = ".*Epoch\\s*(\\d+),\\s*Time\\s*(\\d+\\.\\d)s,\\s*Loss\\s*(\\d+\\.\\d+),\\s*Loss Test\\s*(\\d+\\.\\d+),\\s*LR\\s*(\\d+\\.\\d+).*";
+            // Build Matcher
+            Pattern pattern = Pattern.compile(epochPattern);
+            Matcher m;
+            for (String line : this.theLog) {
+                m = pattern.matcher(line);
+                if (m.find()) {
+                    cleanLog.incrementCounter();
+                    cleanLog.addValue("Epoch", Double.parseDouble(m.group(1)));
+                    cleanLog.addValue("Time[s]", Double.parseDouble(m.group(2)));
+                    cleanLog.addValue("Loss", Double.parseDouble(m.group(3)));
+                    cleanLog.addValue("Loss Test", Double.parseDouble(m.group(4)));
+                    cleanLog.addValue("LR", Double.parseDouble(m.group(5)));
+                }
+            }
+        }
+        return cleanLog;
+    }
+
+    /**
+     * Displays a JavaFX graph as a dialog so you can inspect the Losses per epoch
+     */
+    public void showTrainingGraph() {
+        ResultsTable output = getTrainingResults();
+
+        final NumberAxis xAxis = new NumberAxis();
+        final NumberAxis yAxis = new NumberAxis();
+        xAxis.setLabel("Epochs");
+        yAxis.setForceZeroInRange(true);
+        yAxis.setAutoRanging(false);
+        yAxis.setLowerBound(0);
+        yAxis.setUpperBound(3.0);
+
+        //creating the chart
+        final LineChart<Number, Number> lineChart = new LineChart<>(xAxis, yAxis);
+
+        lineChart.setTitle("Cellpose Training");
+        //defining a series
+        XYChart.Series<Number, Number> loss = new XYChart.Series<>();
+        XYChart.Series<Number, Number> lossTest = new XYChart.Series<>();
+        loss.setName("Loss");
+        lossTest.setName("Loss Test");
+        //populating the series with data
+        for (int i = 0; i < output.getCounter(); i++) {
+            loss.getData().add(new XYChart.Data<>(output.getValue("Epoch", i), output.getValue("Loss", i)));
+            lossTest.getData().add(new XYChart.Data<>(output.getValue("Epoch", i), output.getValue("Loss Test", i)));
+
+        }
+        lineChart.getData().add(loss);
+        lineChart.getData().add(lossTest);
+
+        Dialogs.builder().content(lineChart).title("Cellpose Training").buttons("Close").buttons(ButtonType.CLOSE).show();
+
     }
 
     /**
@@ -639,7 +736,6 @@ public class Cellpose2D {
         AtomicInteger idx = new AtomicInteger();
         int finalDownsample = downsample;
 
-        logger.info("Saving Images...");
         annotations.forEach(a -> {
             int i = idx.getAndIncrement();
 
@@ -650,6 +746,7 @@ public class Cellpose2D {
 
                 ImageWriterTools.writeImageRegion(originalServer, request, imageFile.getAbsolutePath());
                 ImageWriterTools.writeImageRegion(labelServer, request, maskFile.getAbsolutePath());
+                logger.info("Saved image pair: \n\t{}\n\t{}", imageFile.getName(), maskFile.getName());
 
             } catch (IOException ex) {
                 logger.error(ex.getMessage());
@@ -667,15 +764,14 @@ public class Cellpose2D {
         Project<BufferedImage> project = QP.getProject();
         // Prepare location to save images
 
-        project.getImageList().parallelStream().forEach(e -> {
+        // SAve the images in parallel to go a bit faster
+
+        project.getImageList().forEach(e -> {
 
             ImageData<BufferedImage> imageData;
             try {
                 imageData = e.readImageData();
                 String imageName = GeneralTools.getNameWithoutExtension(imageData.getServer().getMetadata().getName());
-
-                // Make the server using the required ops
-                ImageServer<BufferedImage> processed = ImageOps.buildServer(imageData, op, imageData.getServer().getPixelCalibration(), 2048, 2048);
 
                 Collection<PathObject> allAnnotations = imageData.getHierarchy().getAnnotationObjects();
                 // Get Squares for Training
@@ -683,22 +779,27 @@ public class Cellpose2D {
                 List<PathObject> validationAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Validation")).collect(Collectors.toList());
 
                 logger.info("Found {} Training objects and {} Validation Objects in image {}", trainingAnnotations.size(), validationAnnotations.size(), imageName);
+                if (!trainingAnnotations.isEmpty() || !validationAnnotations.isEmpty()) {
+                    // Make the server using the required ops
+                    ImageServer<BufferedImage> processed = ImageOps.buildServer(imageData, op, imageData.getServer().getPixelCalibration(), 2048, 2048);
 
-                LabeledImageServer labelServer = new LabeledImageServer.Builder(imageData)
-                        .backgroundLabel(0, ColorTools.BLACK)
-                        .multichannelOutput(false)
-                        .useInstanceLabels()
-                        .useFilter(o -> o.getPathClass() == null) // Keep only objects with no PathClass
-                        .build();
+                    LabeledImageServer labelServer = new LabeledImageServer.Builder(imageData)
+                            .backgroundLabel(0, ColorTools.BLACK)
+                            .multichannelOutput(false)
+                            .useInstanceLabels()
+                            .useFilter(o -> o.getPathClass() == null) // Keep only objects with no PathClass
+                            .build();
 
-                saveImagePairs(trainingAnnotations, imageName, processed, labelServer, trainDirectory);
-                saveImagePairs(validationAnnotations, imageName, processed, labelServer, valDirectory);
+                    saveImagePairs(trainingAnnotations, imageName, processed, labelServer, trainDirectory);
+                    saveImagePairs(validationAnnotations, imageName, processed, labelServer, valDirectory);
+                }
             } catch (Exception ex) {
                 logger.error(ex.getMessage());
             }
         });
 
     }
+
 
     /**
      * Checks the default folder where cellpose drops a trained model (../train/models/)
@@ -711,7 +812,7 @@ public class Cellpose2D {
         File cellPoseModelFolder = new File(trainDirectory, "models");
         // Find the first file in there
         File[] all = cellPoseModelFolder.listFiles();
-        Optional<File> cellPoseModel = Arrays.stream(all).filter(f -> f.getName().contains("cellpose")).findFirst();
+        Optional<File> cellPoseModel = Arrays.stream(Objects.requireNonNull(all)).filter(f -> f.getName().contains("cellpose")).findFirst();
         if (cellPoseModel.isPresent()) {
             logger.info("Found model file at {} ", cellPoseModel);
             File model = cellPoseModel.get();

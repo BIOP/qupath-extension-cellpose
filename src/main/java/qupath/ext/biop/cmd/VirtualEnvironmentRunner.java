@@ -113,8 +113,12 @@ public class VirtualEnvironmentRunner {
      * This builds, runs the command and outputs it to the logger as it is being run
      * @throws IOException // In case there is an issue starting the process
      * @throws InterruptedException // In case there is an issue after the process is started
+     * @return a string list containing the log of the command
      */
-    public void runCommand() throws IOException, InterruptedException {
+    public String[] runCommand() throws IOException, InterruptedException {
+
+        List<String> logResults = new ArrayList<>();
+
         // Get how to start the command, based on the VENV Type
         List<String> command = getActivationCommand();
 
@@ -157,6 +161,7 @@ public class VirtualEnvironmentRunner {
                 try {
                     for (String line = stdIn.readLine(); line != null; ) {
                         logger.info("{}: {}", name, line);
+                        logResults.add(line);
                         line = stdIn.readLine();
                     }
                 } catch (IOException e) {
@@ -176,5 +181,8 @@ public class VirtualEnvironmentRunner {
         if (exitValue != 0) {
             logger.error("Runner '{}' exited with value {}. Please check output above for indications of the problem.", name, exitValue);
         }
+
+        // Return the log in case we want to use it
+        return logResults.toArray(new String[0]);
     }
 }
