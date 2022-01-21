@@ -85,9 +85,19 @@ def cellpose = Cellpose2D.builder("cyto") // Can choose "None" if you want to tr
 // 2. Run the cellpose training via command line
 // 3. Recover the model file after training, and copy it to where you defined in the builder, returning the reference to it
 
-def resultModel = cellposeTrainer.train()
+def resultModel = cellpose.train()
 
-println "Model Saved under "+resultModel
+// Pick up results to see how the training was performed
+println "Model Saved under "
+println resultModel.getAbsolutePath().toString()
+
+// You can get a ResultsTable of the training. 
+def results = cellpose.getTrainingResults()
+results.show("Training Results")
+
+// Finally you have access to a very simple graph 
+cellpose.showTrainingGraph()
+
 ```
 
 **Extra training options:**

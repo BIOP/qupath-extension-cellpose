@@ -196,8 +196,9 @@ public class Cellpose2D {
 
         // Define temporary folder to work in
         cellposeTempFolder = new File(QP.buildFilePath(QP.PROJECT_BASE_DIR, "cellpose-temp"));
-        cellposeTempFolder.mkdirs();
-
+        boolean mkdirs = cellposeTempFolder.mkdirs();
+        if (!mkdirs)
+            logger.info("Folder creation of {} was interrupted. Either the folder exists or there was a problem.", cellposeTempFolder);
         try {
             FileUtils.cleanDirectory(cellposeTempFolder);
         } catch (IOException e) {
@@ -550,6 +551,13 @@ public class Cellpose2D {
         logger.info("Cellpose command finished running");
     }
 
+    /**
+     * Executes the cellpose training by
+     * 1. Saving the images
+     * 2. running cellpose
+     * 3. moving the resulting model file to the desired directory
+     * @return a link to the model file, which can be displayed
+     */
     public File train() {
 
         try {
@@ -563,6 +571,11 @@ public class Cellpose2D {
         return null;
     }
 
+    /**
+     * Configures and runs the {@link VirtualEnvironmentRunner} that will ultimately run cellpose training
+     * @throws IOException          Exception in case files could not be read
+     * @throws InterruptedException Exception in case of command thread has some failing
+     */
     private void runCellposeTraining() throws IOException, InterruptedException {
 
         //python -m cellpose --train --dir ~/images_cyto/train/ --test_dir ~/images_cyto/test/ --pretrained_model cyto --chan 2 --chan2 1
@@ -625,10 +638,20 @@ public class Cellpose2D {
         logger.info("Cellpose command finished running");
     }
 
+    /**
+     * Returns the log from running the cellpose command, with any error messages and status updates of the cellpose process
+     * You can use this during training or prediction
+     * @return the entire dump of the cellpose log, each line is one element of the String array.
+     */
     public String[] getOutputLog() {
         return theLog;
     }
 
+    /**
+     * Returns a parsed version of the cellpose log as a ResultsTable with columns
+     * Epoch, Time, Loss, Loss Test and LR
+     * @return an ImageJ ResultsTable that can be displayed with {@link ResultsTable#show(String)}
+     */
     public ResultsTable getTrainingResults() {
         ResultsTable cleanLog = new ResultsTable();
 
@@ -643,17 +666,20 @@ public class Cellpose2D {
                 m = pattern.matcher(line);
                 if (m.find()) {
                     cleanLog.incrementCounter();
-                    cleanLog.addValue("Epoch", Double.valueOf(m.group(1)));
-                    cleanLog.addValue("Time[s]", Double.valueOf(m.group(2)));
-                    cleanLog.addValue("Loss", Double.valueOf(m.group(3)));
-                    cleanLog.addValue("Loss Test", Double.valueOf(m.group(4)));
-                    cleanLog.addValue("LR", Double.valueOf(m.group(5)));
+                    cleanLog.addValue("Epoch", Double.parseDouble(m.group(1)));
+                    cleanLog.addValue("Time[s]", Double.parseDouble(m.group(2)));
+                    cleanLog.addValue("Loss", Double.parseDouble(m.group(3)));
+                    cleanLog.addValue("Loss Test", Double.parseDouble(m.group(4)));
+                    cleanLog.addValue("LR", Double.parseDouble(m.group(5)));
                 }
             }
         }
         return cleanLog;
     }
 
+    /**
+     * Displays a JavaFX graph as a dialog so you can inspect the Losses per epoch
+     */
     public void showTrainingGraph() {
         ResultsTable output = getTrainingResults();
 
@@ -670,17 +696,18 @@ public class Cellpose2D {
 
         lineChart.setTitle("Cellpose Training");
         //defining a series
-        XYChart.Series loss = new XYChart.Series();
-        XYChart.Series lossTest = new XYChart.Series();
+        XYChart.Series<Number, Number> loss = new XYChart.Series<>();
+        XYChart.Series<Number, Number> lossTest = new XYChart.Series<>();
         loss.setName("Loss");
         lossTest.setName("Loss Test");
         //populating the series with data
         for (int i = 0; i < output.getCounter(); i++) {
-            loss.getData().add(new XYChart.Data(output.getValue("Epoch", i), output.getValue("Loss", i)));
-            lossTest.getData().add(new XYChart.Data(output.getValue("Epoch", i), output.getValue("Loss Test", i)));
+            loss.getData().add(new XYChart.Data<>(output.getValue("Epoch", i), output.getValue("Loss", i)));
+            lossTest.getData().add(new XYChart.Data<>(output.getValue("Epoch", i), output.getValue("Loss Test", i)));
 
         }
-        lineChart.getData().addAll(loss, lossTest);
+        lineChart.getData().add(loss);
+        lineChart.getData().add(lossTest);
 
         Dialogs.builder().content(lineChart).title("Cellpose Training").buttons("Close").buttons(ButtonType.CLOSE).show();
 
@@ -739,7 +766,7 @@ public class Cellpose2D {
 
         // SAve the images in parallel to go a bit faster
 
-        project.getImageList().stream().forEach(e -> {
+        project.getImageList().forEach(e -> {
 
             ImageData<BufferedImage> imageData;
             try {
@@ -785,7 +812,7 @@ public class Cellpose2D {
         File cellPoseModelFolder = new File(trainDirectory, "models");
         // Find the first file in there
         File[] all = cellPoseModelFolder.listFiles();
-        Optional<File> cellPoseModel = Arrays.stream(all).filter(f -> f.getName().contains("cellpose")).findFirst();
+        Optional<File> cellPoseModel = Arrays.stream(Objects.requireNonNull(all)).filter(f -> f.getName().contains("cellpose")).findFirst();
         if (cellPoseModel.isPresent()) {
             logger.info("Found model file at {} ", cellPoseModel);
             File model = cellPoseModel.get();
