@@ -24,10 +24,10 @@ ext.moduleName = 'qupath.extension.cellpose'
 
 description = 'QuPath extension to use Cellpose'
 
-version = "0.3.1"
+version = "0.3.2"
 
 dependencies {
-    def qupathVersion = "0.3.0" // For now
+    def qupathVersion = "0.3.2" // For now
     
     shadow "io.github.qupath:qupath-gui-fx:${qupathVersion}"
     shadow "org.slf4j:slf4j-api:1.7.30"

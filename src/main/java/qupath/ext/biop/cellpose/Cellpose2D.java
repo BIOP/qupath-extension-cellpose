@@ -522,9 +522,10 @@ public class Cellpose2D {
         }
 
         if (!maskThreshold.isNaN()) {
-            if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE))
+            if (!cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE))
                 cellposeArguments.add("--mask_threshold");
             else cellposeArguments.add("--cellprob_threshold");
+
 
             cellposeArguments.add("" + maskThreshold);
         }
@@ -539,9 +540,13 @@ public class Cellpose2D {
 
         cellposeArguments.add("--no_npy");
 
-        cellposeArguments.add("--resample");
+        if (!cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1))
+            cellposeArguments.add("--resample");
 
         if (useGPU) cellposeArguments.add("--use_gpu");
+
+        if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1))
+            cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
 

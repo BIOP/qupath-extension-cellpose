@@ -41,7 +41,7 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
         // Create the options we need
         ObjectProperty<EnvType> envType = PathPrefs.createPersistentPreference("cellposeEnvType", EnvType.CONDA, EnvType.class);
-        ObjectProperty<CellposeVersion> version = PathPrefs.createPersistentPreference("cellposeVersion",CellposeVersion.CELLPOSE, CellposeVersion.class);
+        ObjectProperty<CellposeVersion> version = PathPrefs.createPersistentPreference("cellposeVersion",CellposeVersion.CELLPOSE_1, CellposeVersion.class);
         StringProperty envPath = PathPrefs.createPersistentPreference("cellposeEnvPath", "");
 
         //Set options to current values
@@ -86,6 +86,6 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
     @Override
     public Version getVersion() {
-        return Version.parse("0.3.1");
+        return Version.parse("0.3.2");
     }
 }
