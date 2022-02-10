@@ -583,8 +583,6 @@ public class Cellpose2D {
      */
     private void runCellposeTraining() throws IOException, InterruptedException {
 
-        //python -m cellpose --train --dir ~/images_cyto/train/ --test_dir ~/images_cyto/test/ --pretrained_model cyto --chan 2 --chan2 1
-
         // Create command to run
         VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeSetup.getEnvironmentNameOrPath(), cellposeSetup.getEnvironmentType(), this.getClass().getSimpleName() + "-train");
 
@@ -634,6 +632,9 @@ public class Cellpose2D {
         if (useOmnipose) cellposeArguments.add("--omni");
 
         if (useGPU) cellposeArguments.add("--use_gpu");
+
+        if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1))
+            cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
 

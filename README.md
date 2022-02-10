@@ -78,6 +78,7 @@ def cellpose = Cellpose2D.builder("cyto") // Can choose "None" if you want to tr
                 .learningRate(0.2)        // Optional: Will default to 0.2
                 .batchSize(8)             // Optional: Will default to 8
                 .modelDirectory(new File("My/location")) // Optional place to store resulting model. Will default to QuPath project root, and make a 'models' folder 
+                .build()
 
 // Once ready for training you can call the train() method
 // train() will:
