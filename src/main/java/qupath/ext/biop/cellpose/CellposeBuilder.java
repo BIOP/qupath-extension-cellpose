@@ -80,6 +80,7 @@ public class CellposeBuilder {
 
     private transient boolean saveBuilder;
     private transient String builderName;
+    private double simplifyDistance = 0.0;
 
     /**
      * can create a cellpose builder from a serialized JSON version of this builder.
@@ -319,6 +320,11 @@ public class CellposeBuilder {
      */
     public CellposeBuilder invert() {
         this.isInvert = true;
+        return this;
+    }
+
+    public CellposeBuilder simplify(double distance) {
+        this.simplifyDistance = distance;
         return this;
     }
 
@@ -622,6 +628,8 @@ public class CellposeBuilder {
 
         if(diameter.isNaN()) cellpose.diameter = 0.0;
         else cellpose.diameter = diameter;
+
+        cellpose.simplifyDistance = simplifyDistance;
 
         cellpose.invert = isInvert;
         cellpose.doCluster = doCluster;

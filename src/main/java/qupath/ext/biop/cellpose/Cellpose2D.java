@@ -18,7 +18,11 @@ package qupath.ext.biop.cellpose;
 
 import ij.IJ;
 import ij.ImagePlus;
+import ij.gui.PolygonRoi;
+import ij.gui.Roi;
+import ij.gui.Wand;
 import ij.measure.ResultsTable;
+import ij.process.ImageProcessor;
 import javafx.scene.chart.LineChart;
 import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
@@ -29,9 +33,11 @@ import org.bytedeco.opencv.opencv_core.Mat;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.index.strtree.STRtree;
+import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.biop.cmd.VirtualEnvironmentRunner;
+import qupath.imagej.tools.IJTools;
 import qupath.lib.analysis.features.ObjectMeasurements;
 import qupath.lib.analysis.images.ContourTracing;
 import qupath.lib.common.ColorTools;
@@ -39,6 +45,7 @@ import qupath.lib.common.GeneralTools;
 import qupath.lib.geom.ImmutableDimension;
 import qupath.lib.gui.dialogs.Dialogs;
 import qupath.lib.images.ImageData;
+import qupath.lib.images.PathImage;
 import qupath.lib.images.servers.ImageServer;
 import qupath.lib.images.servers.LabeledImageServer;
 import qupath.lib.images.servers.PixelCalibration;
@@ -61,15 +68,18 @@ import qupath.opencv.ops.ImageDataOp;
 import qupath.opencv.ops.ImageOps;
 import qupath.opencv.tools.OpenCVTools;
 
+import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Dense object detection based on the following publication and code
@@ -92,6 +102,7 @@ public class Cellpose2D {
     private final static Logger logger = LoggerFactory.getLogger(Cellpose2D.class);
     public Double learningRate = null;
     public Integer batchSize = null;
+    public double simplifyDistance = 0.0;
     protected Integer channel1 = 0;
     protected Integer channel2 = 0;
     protected Double iouThreshold = 0.1;
@@ -181,6 +192,16 @@ public class Cellpose2D {
         return parent;
     }
 
+    private Geometry simplify(Geometry geom) {
+        if (simplifyDistance <= 0)
+            return geom;
+        try {
+            return VWSimplifier.simplify(geom, simplifyDistance);
+        } catch (Exception e) {
+            return geom;
+        }
+    }
+
     /**
      * Detect cells within one or more parent objects, firing update events upon completion.
      *
@@ -259,16 +280,37 @@ public class Cellpose2D {
                 File ori = tilefile.getFile();
                 File maskFile = new File(ori.getParent(), FilenameUtils.removeExtension(ori.getName()) + "_cp_masks.tif");
                 if (maskFile.exists()) {
+                    logger.info("Getting objects for {}", maskFile);
+
+                    // thank you Pete for the ContourTracing Class
+                    List<PathObject> detections = null;
                     try {
-                        logger.info("Getting objects for {}", maskFile);
+                        detections = ContourTracing.labelsToDetections( maskFile.toPath(), tilefile.getTile());
 
-                        // thank you Pete for the ContourTracing Class
-                        List<PathObject> detections = ContourTracing.labelsToDetections(maskFile.toPath(), tilefile.getTile());
 
-                        allDetections.addAll(detections);
+                        // Clean Detections
+                        detections = detections.parallelStream().map(det -> {
+                            if (det.getROI().getGeometry().getNumGeometries() > 1) {
+                                // Detemine largest one
+                                Geometry geom = det.getROI().getGeometry();
+                                double largestArea = geom.getGeometryN(0).getArea();
+                                int idx = 0;
+                                for (int i = 0; i < geom.getNumGeometries(); i++) {
+                                    if (geom.getGeometryN(i).getArea() > largestArea) idx = i;
+                                }
+                                ROI newROI = GeometryTools.geometryToROI(geom.getGeometryN(idx), det.getROI().getImagePlane());
+                                return PathObjects.createDetectionObject(newROI, det.getPathClass(), det.getMeasurementList());
+                            } else {
+                                return det;
+                            }
+                        }).collect(Collectors.toList());
+
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
+                    logger.info("Getting objects for {} Done", maskFile);
+
+                    allDetections.addAll(detections);
                 }
             });
 
@@ -346,6 +388,8 @@ public class Cellpose2D {
 
     private PathObject convertToObject(PathObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
         var geomNucleus = object.getROI().getGeometry();
+        geomNucleus = simplify(geomNucleus);
+
         PathObject pathObject;
         if (cellExpansion > 0) {
             var geomCell = CellTools.estimateCellBoundary(geomNucleus, cellExpansion, cellConstrainScale);
