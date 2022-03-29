@@ -13,7 +13,7 @@ This extension will need to know the path to your Cellpose environment.
 #### Cellpose Environment on Mac
 Currently, due to lack of testing and obscurity in the documentation, you cannot run the `conda` version of Cellpose from Mac or Linux, and a Python virtual environment is suggested (`venv`). Anyone able to run `conda activate` from a Java `ProcessBuilder`, please let me know :)
 
-**The 'Simplest' way so far is the following**
+**The 'Simplest' way with just a `venv` so far is the following**
 1. Create a conda environment with the right Python version, and use that `conda` environment to create a `venv`
 ```
 conda create python38 python=3.8
@@ -27,7 +27,18 @@ source /where/you/want/your/cellpose/bin/activate
 pip install cellpose 
 ```
 
-### Step 1.1: Run Cellpose at least once from the command line
+### Step 1.1: Anaconda, Miniconda: Allow `conda` command from command line
+1. Into the environment variable , edit PATH , add path to your `..\Anaconda3\condabin` default would be `C:\ProgramData\Anaconda3\condabin`
+2. Open a new PowerShell (and/or PowerShell (x86) ) or Command Promopt and run the following command once to initialize conda: `conda init`
+
+From now on you don't need to run a conda prompt you can simply activate a conda env from cmd.exe .
+
+#### To check if it works:
+
+1. Press the windows key, type cmd.exe (to get a command promt)
+2. Type `conda env list` and you should get the list of your conda envs
+ 
+### Step 1.2: Run Cellpose at least once from the command line
 
 If you never ran Cellpose before, it needs to download its pretrained models the first time you run it. This may take some time and we've experienced the process hanging if done through QuPath. Just run cellpose from your command line and it should download all the models. Do this before using it in QuPath.
 
@@ -45,7 +56,7 @@ Complete the fields with the requested information
 The example below is from a full GPU enabled cellpose installation that was made [by following the instructions here](https://c4science.ch/w/bioimaging_and_optics_platform_biop/computers-servers/software/gpu-deep-learning/python-venv/#cellpose). 
 ![image](https://user-images.githubusercontent.com/319932/137691866-2e15d4b5-526c-4360-9d1d-710bb285fd09.png)
 
-In the example provided above for installing cellpose on Mac/Linux, you would enter `/where/you/want/your/cellpose/` and Python VENV as options
+In the example provided above for installing cellpose on Mac/Linux, you would enter `/where/you/want/your/cellpose/` and `Python VENV` as options
 
 ## Using the Cellpose QuPath Extension
 
