@@ -29,7 +29,10 @@ pip install cellpose
 
 ### Step 1.1: Anaconda, Miniconda: Allow `conda` command from command line
 1. Into the environment variable , edit PATH , add path to your `..\Anaconda3\condabin` default would be `C:\ProgramData\Anaconda3\condabin`
-2. Open a new PowerShell (and/or PowerShell (x86) ) or Command Promopt and run the following command once to initialize conda: `conda init`
+2. Open a new PowerShell (and/or PowerShell (x86) ) or Command Prompt and run the following command once to initialize conda: 
+```
+conda init
+```
 
 From now on you don't need to run a conda prompt you can simply activate a conda env from cmd.exe .
 
