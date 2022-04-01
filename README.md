@@ -91,6 +91,7 @@ def cellpose = Cellpose2D.builder("cyto") // Can choose "None" if you want to tr
                 .epochs(500)              // Optional: will default to 500
                 .learningRate(0.2)        // Optional: Will default to 0.2
                 .batchSize(8)             // Optional: Will default to 8
+                .useGPU()                 // Optional: Use the GPU if configured, defaults to CPU only
                 .modelDirectory(new File("My/location")) // Optional place to store resulting model. Will default to QuPath project root, and make a 'models' folder 
                 .build()
 
@@ -150,6 +151,8 @@ def cellpose = Cellpose2D.builder( pathModel )
         .measureShape()                // Add shape measurements
         .measureIntensity()            // Add cell measurements (in all compartments)  
 //        .createAnnotations()           // Make annotations instead of detections. This ignores cellExpansion
+        .useGPU()                      // Optional: Use the GPU if configured, defaults to CPU only
+
         .build()
 
 // Run detection for the selected objects
