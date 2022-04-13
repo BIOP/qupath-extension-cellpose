@@ -80,6 +80,12 @@ public class CellposeBuilder {
 
     private transient boolean saveBuilder;
     private transient String builderName;
+    private double simplifyDistance = 0.0;
+    private boolean useCellposeNormalization = true;
+    private boolean useGlobalNorm = false;
+    private int globalNormalizationScale = 8;
+    private double normPercentileMin = -1.0;
+    private double normPercentileMax = -1.0;
 
     /**
      * can create a cellpose builder from a serialized JSON version of this builder.
@@ -130,6 +136,31 @@ public class CellposeBuilder {
         this.pixelSize = pixelSize;
         return this;
     }
+
+    /**
+     * Apply percentile normalization to the input image channels.
+     * <p>
+     * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
+     * in which case the order in which the operations are applied depends upon the order
+     * in which the methods of the builder are called.
+     * <p>
+     * Warning! This is applied on a per-tile basis. This can result in artifacts and false detections
+     * without background/constant regions.
+     * Consider using {@link #inputAdd(double...)} and {@link #inputScale(double...)} as alternative
+     * normalization strategies, if appropriate constants can be determined to apply globally.
+     *
+     * @param min minimum percentile
+     * @param max maximum percentile
+     * @return this builder
+     */
+    public CellposeBuilder normalizePercentiles(double min, double max) {
+        this.normPercentileMin = min;
+        this.normPercentileMax = max;
+
+        //this.ops.add(ImageOps.Normalize.percentile(min, max));
+        return this;
+    }
+
 
     /**
      * Specify channels. Useful for detecting nuclei for one channel
@@ -184,27 +215,6 @@ public class CellposeBuilder {
      */
     public CellposeBuilder preprocess(ImageOp... ops) {
         Collections.addAll(this.ops, ops);
-        return this;
-    }
-
-    /**
-     * Apply percentile normalization to the input image channels.
-     * <p>
-     * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
-     * in which case the order in which the operations are applied depends upon the order
-     * in which the methods of the builder are called.
-     * <p>
-     * Warning! This is applied on a per-tile basis. This can result in artifacts and false detections
-     * without background/constant regions.
-     * Consider using {@link #inputAdd(double...)} and {@link #inputScale(double...)} as alternative
-     * normalization strategies, if appropriate constants can be determined to apply globally.
-     *
-     * @param min minimum percentile
-     * @param max maximum percentile
-     * @return this builder
-     */
-    public CellposeBuilder normalizePercentiles(double min, double max) {
-        this.ops.add(ImageOps.Normalize.percentile(min, max));
         return this;
     }
 
@@ -267,12 +277,28 @@ public class CellposeBuilder {
         return this;
     }
 
-    /**
-     * Sets the channels to use by cellpose, in case there is an issue with the order or the number of exported channels
-     * @param channel1 the main channel
-     * @param channel2 the second channel (typically nuclei)
-     * @return this builder
-     */
+    public CellposeBuilder useCellposeNormalization( boolean useCellposeNorm){
+        this.useCellposeNormalization = useCellposeNorm;
+        return this;
+    }
+
+    public CellposeBuilder useGlobalNormalization( boolean useGlobalNorm) {
+        this.useGlobalNorm = useGlobalNorm;
+        return this;
+    }
+
+    public CellposeBuilder globalNormalizationScale( int globalNormDownsampling ) {
+        this.globalNormalizationScale = globalNormDownsampling;
+        return this;
+    }
+
+
+        /**
+         * Sets the channels to use by cellpose, in case there is an issue with the order or the number of exported channels
+         * @param channel1 the main channel
+         * @param channel2 the second channel (typically nuclei)
+         * @return this builder
+         */
     public CellposeBuilder cellposeChannels(int channel1, int channel2) {
         this.channel1 = channel1;
         this.channel2 = channel2;
@@ -319,6 +345,11 @@ public class CellposeBuilder {
      */
     public CellposeBuilder invert() {
         this.isInvert = true;
+        return this;
+    }
+
+    public CellposeBuilder simplify(double distance) {
+        this.simplifyDistance = distance;
         return this;
     }
 
@@ -623,7 +654,20 @@ public class CellposeBuilder {
         if(diameter.isNaN()) cellpose.diameter = 0.0;
         else cellpose.diameter = diameter;
 
+        cellpose.simplifyDistance = simplifyDistance;
+
         cellpose.invert = isInvert;
+
+        if(cellpose.useCellposeNormalization) logger.info("Using Cellpose Normalization (per tile).");
+        cellpose.useCellposeNormalization = useCellposeNormalization;
+
+        if(cellpose.useGlobalNorm && cellpose.useCellposeNormalization) {
+            logger.warn("You cannot use global normalization and enable 'use cellpose normalization' at the same time!. Will default to cellpose normalization (per tile).");
+        } else {
+            logger.info("Using global normalization with a downsampling factor of {}", globalNormalizationScale);
+            cellpose.useGlobalNorm = useGlobalNorm;
+            cellpose.globalNormalizationScale = globalNormalizationScale;
+        }
         cellpose.doCluster = doCluster;
         cellpose.excludeEdges = excludeEdges;
         cellpose.useOmnipose = useOmnipose;
@@ -656,6 +700,10 @@ public class CellposeBuilder {
         cellpose.nEpochs = nEpochs;
         cellpose.learningRate = learningRate;
         cellpose.batchSize = batchSize;
+
+        cellpose.normPercentileMax = normPercentileMax;
+        cellpose.normPercentileMin = normPercentileMin;
+
 
 
         // Overlap for segmentation of tiles. Should be large enough that any object must be "complete"

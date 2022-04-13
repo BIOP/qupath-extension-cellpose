@@ -9,7 +9,9 @@ public class CellposeSetup {
     public enum CellposeVersion {
         CELLPOSE("Cellpose before v0.7.0"),
         OMNIPOSE("Omnipose after v0.7.2"),
-        CELLPOSE_1("Cellpose Version 1.0");
+        CELLPOSE_1("Cellpose Version 1.0"),
+        CELLPOSE_2("Cellpose Version 2.0");
+
 
         private final String description;
 
