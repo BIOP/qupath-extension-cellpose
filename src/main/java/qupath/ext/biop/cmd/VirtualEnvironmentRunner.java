@@ -75,7 +75,7 @@ public class VirtualEnvironmentRunner {
             case CONDA:
                 switch (platform) {
                     case WINDOWS:
-                        cmd.addAll(Arrays.asList("conda", "activate", environmentNameOrPath, "&", "python"));
+                        cmd.addAll(Arrays.asList("CALL", "conda.bat", "activate", environmentNameOrPath, "&", "python"));
                         break;
                     case UNIX:
                     case OSX:
