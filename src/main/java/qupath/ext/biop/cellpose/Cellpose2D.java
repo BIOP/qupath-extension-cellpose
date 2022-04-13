@@ -18,11 +18,8 @@ package qupath.ext.biop.cellpose;
 
 import ij.IJ;
 import ij.ImagePlus;
-import ij.gui.PolygonRoi;
-import ij.gui.Roi;
-import ij.gui.Wand;
+
 import ij.measure.ResultsTable;
-import ij.process.ImageProcessor;
 import javafx.scene.chart.LineChart;
 import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
@@ -37,7 +34,6 @@ import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.biop.cmd.VirtualEnvironmentRunner;
-import qupath.imagej.tools.IJTools;
 import qupath.lib.analysis.features.ObjectMeasurements;
 import qupath.lib.analysis.images.ContourTracing;
 import qupath.lib.common.ColorTools;
@@ -45,7 +41,6 @@ import qupath.lib.common.GeneralTools;
 import qupath.lib.geom.ImmutableDimension;
 import qupath.lib.gui.dialogs.Dialogs;
 import qupath.lib.images.ImageData;
-import qupath.lib.images.PathImage;
 import qupath.lib.images.servers.ImageServer;
 import qupath.lib.images.servers.LabeledImageServer;
 import qupath.lib.images.servers.PixelCalibration;
@@ -68,18 +63,15 @@ import qupath.opencv.ops.ImageDataOp;
 import qupath.opencv.ops.ImageOps;
 import qupath.opencv.tools.OpenCVTools;
 
-import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 /**
  * Dense object detection based on the following publication and code
@@ -103,6 +95,13 @@ public class Cellpose2D {
     public Double learningRate = null;
     public Integer batchSize = null;
     public double simplifyDistance = 0.0;
+    public double normPercentileMin = -1.0;
+    public double normPercentileMax = -1.0;
+
+    protected boolean useCellposeNormalization = true;
+    protected boolean useGlobalNorm = false;
+    protected int globalNormalizationScale = 8;
+
     protected Integer channel1 = 0;
     protected Integer channel2 = 0;
     protected Double iouThreshold = 0.1;
@@ -566,9 +565,10 @@ public class Cellpose2D {
         }
 
         if (!maskThreshold.isNaN()) {
-            if (!cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE))
+            if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE))
+                cellposeArguments.add("--cellprob_threshold");
+            else
                 cellposeArguments.add("--mask_threshold");
-            else cellposeArguments.add("--cellprob_threshold");
 
 
             cellposeArguments.add("" + maskThreshold);
@@ -584,12 +584,14 @@ public class Cellpose2D {
 
         cellposeArguments.add("--no_npy");
 
-        if (!cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1))
+        if ( !cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+              cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) )
             cellposeArguments.add("--resample");
 
         if (useGPU) cellposeArguments.add("--use_gpu");
 
-        if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1))
+        if ( cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) )
             cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
@@ -677,7 +679,8 @@ public class Cellpose2D {
 
         if (useGPU) cellposeArguments.add("--use_gpu");
 
-        if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1))
+        if ( cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) )
             cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
@@ -847,17 +850,15 @@ public class Cellpose2D {
                 logger.error(ex.getMessage());
             }
         });
+        }
 
-    }
-
-
-    /**
-     * Checks the default folder where cellpose drops a trained model (../train/models/)
-     * and moves it to the defined modelDirectory using {@link #modelDirectory}
-     *
-     * @return the File of the moved model
-     * @throws IOException in case there was a problem moving the file
-     */
+        /**
+         * Checks the default folder where cellpose drops a trained model (../train/models/)
+         * and moves it to the defined modelDirectory using {@link #modelDirectory}
+         *
+         * @return the File of the moved model
+         * @throws IOException in case there was a problem moving the file
+         */
     private File moveAndReturnModelFile() throws IOException {
         File cellPoseModelFolder = new File(trainDirectory, "models");
         // Find the first file in there
