@@ -86,6 +86,7 @@ public class CellposeBuilder {
     private int globalNormalizationScale = 8;
     private double normPercentileMin = -1.0;
     private double normPercentileMax = -1.0;
+    private int overlap;
 
     /**
      * can create a cellpose builder from a serialized JSON version of this builder.
@@ -607,6 +608,17 @@ public class CellposeBuilder {
     }
 
     /**
+     * Set the overlap (in pixels) between tiles. This overlap should be larger than 2x the largest object you are
+     * trying to segment
+     * @param overlap the overlap, in pixels
+     * @return this builder
+     */
+    public CellposeBuilder setOverlap( int overlap) {
+        this.overlap = overlap;
+        return this;
+    }
+
+    /**
      * Create a {@link Cellpose2D}, all ready for detection.
      *
      * @return a Cellpose2D object, ready to be run
@@ -643,25 +655,25 @@ public class CellposeBuilder {
         cellpose.channel1 = channel1;
         cellpose.channel2 = channel2;
 
-        if(maskThreshold.isNaN()) cellpose.maskThreshold = 0.0;
+        if (maskThreshold.isNaN()) cellpose.maskThreshold = 0.0;
         else cellpose.maskThreshold = maskThreshold;
 
-        if(flowThreshold.isNaN()) cellpose.flowThreshold = 0.4;
+        if (flowThreshold.isNaN()) cellpose.flowThreshold = 0.4;
         else cellpose.flowThreshold = flowThreshold;
 
         cellpose.pixelSize = pixelSize;
 
-        if(diameter.isNaN()) cellpose.diameter = 0.0;
+        if (diameter.isNaN()) cellpose.diameter = 0.0;
         else cellpose.diameter = diameter;
 
         cellpose.simplifyDistance = simplifyDistance;
 
         cellpose.invert = isInvert;
 
-        if(cellpose.useCellposeNormalization) logger.info("Using Cellpose Normalization (per tile).");
+        if (cellpose.useCellposeNormalization) logger.info("Using Cellpose Normalization (per tile).");
         cellpose.useCellposeNormalization = useCellposeNormalization;
 
-        if(cellpose.useGlobalNorm && cellpose.useCellposeNormalization) {
+        if (cellpose.useGlobalNorm && cellpose.useCellposeNormalization) {
             logger.warn("You cannot use global normalization and enable 'use cellpose normalization' at the same time!. Will default to cellpose normalization (per tile).");
         } else {
             logger.info("Using global normalization with a downsampling factor of {}", globalNormalizationScale);
@@ -705,15 +717,20 @@ public class CellposeBuilder {
         cellpose.normPercentileMin = normPercentileMin;
 
 
-
         // Overlap for segmentation of tiles. Should be large enough that any object must be "complete"
         // in at least one tile for resolving overlaps
-        if( diameter == 0.0 ) {
-            cellpose.overlap = 30*2; // 30 pixels (largest median object size of Cellpose models times 2.0 to be sure.
-            logger.warn("Diameter was set to {}. Unknown overlap to use. Assuming {} pixels", diameter, cellpose.overlap);
-        } else {
-            cellpose.overlap = (int) Math.round(2 * diameter);
+        if (this.overlap > 0) {
+            cellpose.overlap = this.overlap;
+
+        } else { // The overlap was not set by the user
+            if (diameter == 0.0) {
+                cellpose.overlap = 30 * 2; // 30 pixels (largest median object size of Cellpose models times 2.0 to be sure.
+                logger.warn("Diameter was set to {}. Default overlap used");
+            } else {
+                cellpose.overlap = (int) Math.round(2 * diameter);
+            }
         }
+        logger.info("If tiling is necessary, {} pixels overlap will be taken between tiles", cellpose.overlap);
 
         // Intersection over union threshold to deal with duplicates
         cellpose.iouThreshold = iouThreshold;
