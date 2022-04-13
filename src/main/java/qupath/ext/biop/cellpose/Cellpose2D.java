@@ -18,7 +18,6 @@ package qupath.ext.biop.cellpose;
 
 import ij.IJ;
 import ij.ImagePlus;
-
 import ij.measure.ResultsTable;
 import javafx.scene.chart.LineChart;
 import javafx.scene.chart.NumberAxis;
@@ -679,8 +678,7 @@ public class Cellpose2D {
 
         if (useGPU) cellposeArguments.add("--use_gpu");
 
-        if ( cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
-                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) )
+        if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1))
             cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
@@ -850,7 +848,7 @@ public class Cellpose2D {
                 logger.error(ex.getMessage());
             }
         });
-        }
+    }
 
         /**
          * Checks the default folder where cellpose drops a trained model (../train/models/)
