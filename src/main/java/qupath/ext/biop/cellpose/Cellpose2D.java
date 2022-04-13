@@ -563,12 +563,11 @@ public class Cellpose2D {
             cellposeArguments.add("" + flowThreshold);
         }
 
-        if (!maskThreshold.isNaN()) {
+        if (!maskThreshold.isNaN() && !cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) ) {
             if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE))
                 cellposeArguments.add("--cellprob_threshold");
             else
                 cellposeArguments.add("--mask_threshold");
-
 
             cellposeArguments.add("" + maskThreshold);
         }
@@ -583,8 +582,8 @@ public class Cellpose2D {
 
         cellposeArguments.add("--no_npy");
 
-        if ( !cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
-              cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) )
+        if ( !(cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) ))
             cellposeArguments.add("--resample");
 
         if (useGPU) cellposeArguments.add("--use_gpu");
