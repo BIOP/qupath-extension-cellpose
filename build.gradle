@@ -1,7 +1,7 @@
 plugins {
   id 'java-library'
   // To create a shadow/fat jar, including dependencies
-  id 'com.github.johnrengelman.shadow' version '7.0.0'
+  id 'maven-publish'
 }
 
 repositories {
@@ -24,13 +24,13 @@ ext.moduleName = 'qupath.extension.cellpose'
 
 description = 'QuPath extension to use Cellpose'
 
-version = "0.3.5"
+version = "0.3.6"
 
 dependencies {
     def qupathVersion = "0.3.2" // For now
-    
-    shadow "io.github.qupath:qupath-gui-fx:${qupathVersion}"
-    shadow "org.slf4j:slf4j-api:1.7.30"
+
+    implementation "io.github.qupath:qupath-gui-fx:${qupathVersion}"
+    implementation "org.slf4j:slf4j-api:1.7.30"
     implementation 'commons-io:commons-io:2.11.0'
 
 
@@ -83,6 +83,20 @@ if (!strictJavadoc) {
     }
 }
 
+jar {
+    // Important to set version so this can be queried within QuPath
+    manifest {
+        def manifestAttributes = [
+                "Implementation-Vendor": "QuPath developers",
+                "Implementation-Version": project.version,
+ //               'Automatic-Module-Name': "io.github." + moduleName,
+                "QuPath-build-time": new Date().format("yyyy-MM-dd, HH:mm")
+        ]
+
+        attributes(manifestAttributes)
+    }
+}
+
     
 /*
  * Avoid 'Entry .gitkeep is a duplicate but no duplicate handling strategy has been set.'
@@ -94,4 +108,37 @@ tasks.withType(org.gradle.jvm.tasks.Jar) {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+publishing {
+
+    repositories {
+        maven {
+            name = "scijava"
+            //credentials(PasswordCredentials::class)
+            if (version.toString().endsWith("SNAPSHOT")) {
+                url = uri("https://maven.scijava.org/content/repositories/snapshots")
+            } else {
+                url = uri("https://maven.scijava.org/content/repositories/releases")
+            }
+            credentials {
+                username = System.getenv("MAVEN_USER")
+                password = System.getenv("MAVEN_PASS")
+            }
+        }
+    }
+
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            pom {
+                licenses {
+                    license {
+                        name = 'GNU General Public License, Version 3'
+                        url = 'https://www.gnu.org/licenses/gpl-3.0.txt'
+                    }
+                }
+            }
+        }
+    }
 }
