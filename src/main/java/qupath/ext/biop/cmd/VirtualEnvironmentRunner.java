@@ -11,6 +11,7 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * A wrapper to run python virtualenvs, that tries to figure out the commands to run based on the environment type
@@ -33,6 +34,7 @@ public class VirtualEnvironmentRunner {
     public enum EnvType {
         CONDA("Anaconda or Miniconda", "If you need to start your virtual environment with 'conda activate' then this is the type for you"),
         VENV( "Python venv", "If you use 'myenv/Scripts/activate' to call your virtual environment, then use this environment type"),
+        EXE("Python Executable", "Use this if you'd like to call the python executable directly. Can be useful in case you have issues with conda."),
         OTHER("Other (Unsupported)", "Currently only conda and venv are supported.");
 
         private final String description;
@@ -94,6 +96,9 @@ public class VirtualEnvironmentRunner {
                         break;
                 }
                 break;
+            case EXE:
+                cmd.add(environmentNameOrPath);
+                break;
             case OTHER:
                 return null;
         }
@@ -135,7 +140,16 @@ public class VirtualEnvironmentRunner {
             case OSX:
                 shell.addAll(Arrays.asList("bash", "-c"));
 
+                // If there are spaces, then we should encapsulate the command with quotes
+                command = command.stream().map(s -> {
+                            if (s.trim().contains(" "))
+                                return "\"" + s.trim() + "\"";
+                            return s;
+                        }).collect(Collectors.toList());
+
+                // The last part needs to be sent as a single string, otherwise it does not run
                 String cmdString = command.toString().replace(",","");
+
                 shell.add(cmdString.substring(1, cmdString.length()-1));
                 break;
 
