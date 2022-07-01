@@ -563,8 +563,8 @@ public class Cellpose2D {
             cellposeArguments.add("" + flowThreshold);
         }
 
-        if (!maskThreshold.isNaN() && !cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) ) {
-            if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE))
+        if (!maskThreshold.isNaN() ) {
+            if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE) || cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
                 cellposeArguments.add("--cellprob_threshold");
             else
                 cellposeArguments.add("--mask_threshold");
