@@ -3,49 +3,62 @@
 This repo adds some support to use 2D Cellpose within QuPath through a Python virtual environment.
 
 
-## Installing
+# Installation
 
-### Step 1: Install Cellpose
+###Step 1: Install Cellpose
 
 Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose).
 This extension will need to know the path to your Cellpose environment.
 
-#### Cellpose Environment on Mac
-Currently, due to lack of testing and obscurity in the documentation, you cannot run the `conda` version of Cellpose from Mac or Linux, and a Python virtual environment is suggested (`venv`). Anyone able to run `conda activate` from a Java `ProcessBuilder`, please let me know :)
+### Example Cellpose 2.0.5 installation with CUDA 11.3 GPU support
 
-**The 'Simplest' way with just a `venv` so far is the following**
-1. Create a conda environment with the right Python version, and use that `conda` environment to create a `venv`
+First, we create the conda environment:
 ```
-conda create python38 python=3.8
-conda activate python38
-python -m venv /where/you/want/your/cellpose
-conda deactivate
-source /where/you/want/your/cellpose/bin/activate
+conda create -n cellpose-205 python=3.8
+conda activate cellpose-205
+pip install cellpose==2.0.5
+pip uninstall torch
+pip install torch --extra-index-url https://download.pytorch.org/whl/cu113
 ```
-2. Now we are on the `venv` and we can install Cellpose
+<details>
+  <summary>See the 'pip freeze' result</summary>
+
+cellpose==2.0.5
+certifi @ file:///C:/Windows/TEMP/abs_e9b7158a-aa56-4a5b-87b6-c00d295b01fanefpc8_o/croots/recipe/certifi_1655968940823/work/certifi
+charset-normalizer==2.0.12
+colorama==0.4.5
+fastremap==1.13.0
+idna==3.3
+imagecodecs==2022.2.22
+llvmlite==0.38.1
+natsort==8.1.0
+numba==0.55.2
+numpy==1.22.4
+opencv-python-headless==4.6.0.66
+Pillow==9.1.1
+requests==2.28.0
+scipy==1.8.1
+tifffile==2022.5.4
+torch==1.11.0+cu113
+torchaudio==0.11.0+cu113
+torchvision==0.12.0+cu113
+tqdm==4.64.0
+typing_extensions==4.2.0
+urllib3==1.26.9
+wincertstore==0.2
+</details>
+    
+Next, we look for the Python executable, **which we will need later when configuring the QuPath Cellpose extension**.
+
 ```
-pip install cellpose 
+where python
+C:\Users\oburri\.conda\envs\cellpose-205\python.exe
 ```
 
-### Step 1.1: Anaconda, Miniconda: Allow `conda` command from command line
-1. Into the environment variable , edit PATH , add path to your `..\Anaconda3\condabin` default would be `C:\ProgramData\Anaconda3\condabin`
-2. Open a new PowerShell (and/or PowerShell (x86) ) or Command Prompt and run the following command once to initialize conda: 
-```
-conda init
-```
+> **Note**
+> While this example is done under Windows, this will work on Mac and Linux as well. 
 
-From now on you don't need to run a conda prompt you can simply activate a conda env from cmd.exe .
-
-#### To check if it works:
-
-1. Press the windows key, type cmd.exe (to get a command promt)
-2. Type `conda env list` and you should get the list of your conda envs
- 
-### Step 1.2: Run Cellpose at least once from the command line
-
-If you never ran Cellpose before, it needs to download its pretrained models the first time you run it. This may take some time and we've experienced the process hanging if done through QuPath. Just run cellpose from your command line and it should download all the models. Do this before using it in QuPath.
-
-### Step 2: Install the QuPath Cellpose extension
+## Step 2: Install the QuPath Cellpose extension
 Download the latest `qupath-extension-cellpose-[version].jar` file from [releases](https://github.com/biop/qupath-extension-cellpose/releases) and drag it onto the main QuPath window.
 
 If you haven't installed any extensions before, you'll be prompted to select a QuPath user directory.
@@ -53,25 +66,24 @@ The extension will then be copied to a location inside that directory.
 
 You might then need to restart QuPath (but not your computer).
 
-### QuPath: First time setup
+## QuPath Extension Cellpose: First time setup
 Go to `Edit > Preferences > Cellpose`
-Complete the fields with the requested information
-The example below is from a full GPU enabled cellpose installation that was made [by following the instructions here](https://c4science.ch/w/bioimaging_and_optics_platform_biop/computers-servers/software/gpu-deep-learning/python-venv/#cellpose). 
-![image](https://user-images.githubusercontent.com/319932/137691866-2e15d4b5-526c-4360-9d1d-710bb285fd09.png)
+Complete the fields with the requested information. based on the `conda` installation above, this is what it should look like:
+![Cellpose setup example](files/cellpose-qupath-setup-example.png)
 
-In the example provided above for installing cellpose on Mac/Linux, you would enter `/where/you/want/your/cellpose/` and `Python VENV` as options
+# Using the Cellpose QuPath Extension
 
-## Using the Cellpose QuPath Extension
-
-### Training
+## Training
 
 **Requirements**:
-A QuPath project with rectangles of class "Training" and "Validation" inside which the ground truth objects have been painted.
+A QuPath project with rectangles of class "Training" and "Validation" inside which the ground truth objects have been painted as annotations with no class.
+![Example Annotations for Training](files/cellpose-qupath-training-example.png)
 
 We typically create a standalone QuPath project for training only. This project will contain the training images along with the ground truth annotations drawn in QuPath.
 Here are some reasons we do it this way:
+
 1. Separating training and prediction/analysis makes for clean project structures and easier sharing of the different steps of your workflow.
-2. In case we need to get more ground truth, we can simply fire up the relevant QuPath project and import the newly trained model into any other project that might need it.
+2. In case we need to get more ground truth, we can simply fire up the relevant QuPath project and rerun the training, and then import the newly trained model into any other project that might need it.
 
 **Protocol**
 
@@ -113,10 +125,9 @@ results.show("Training Results")
 
 // Finally you have access to a very simple graph 
 cellpose.showTrainingGraph()
-
 ```
 
-**Extra training options:**
+### More training options
 [All options in Cellpose](https://github.com/MouseLand/cellpose/blob/45f1a3c640efb8ca7d252712620af6f58d024c55/cellpose/__main__.py#L36) have not been transferred. 
 In case that this might be of use to you, please [open an issue](https://github.com/BIOP/qupath-extension-cellpose/issues). 
 
@@ -130,7 +141,7 @@ All builder options are to be found [in the Javadoc](https://biop.github.io/qupa
 import qupath.ext.biop.cellpose.Cellpose2D
 
 // Specify the model name (cyto, nuc, cyto2, omni_bact or a path to your custom model)
-def pathModel = 'cyto'
+def pathModel = 'cyto2'
 
 def cellpose = Cellpose2D.builder( pathModel )
         .pixelSize( 0.5 )              // Resolution for detection
@@ -141,6 +152,7 @@ def cellpose = Cellpose2D.builder( pathModel )
 //        .maskThreshold(-0.2)           // Threshold for the mask detection, defaults to 0.0
 //        .flowThreshold(0.5)            // Threshold for the flows, defaults to 0.4 
 //        .diameter(0)                   // Median object diameter. Set to 0.0 for the `bact_omni` model or for automatic computation
+//        .setOverlap(60)                // Overlap between tiles (in pixels) that the QuPath Cellpose Extension will extract. Defaults to 2x the diameter or 60 px if the diameter is set to 0 
 //        .invert()                      // Have cellpose invert the image
 //        .useOmnipose()                 // Add the --omni flag to use the omnipose segmentation model
 //        .excludeEdges()                // Clears objects toutching the edge of the image (Not of the QuPath ROI)
@@ -152,7 +164,6 @@ def cellpose = Cellpose2D.builder( pathModel )
         .measureIntensity()            // Add cell measurements (in all compartments)  
 //        .createAnnotations()           // Make annotations instead of detections. This ignores cellExpansion
         .useGPU()                      // Optional: Use the GPU if configured, defaults to CPU only
-
         .build()
 
 // Run detection for the selected objects
@@ -166,7 +177,7 @@ cellpose.detectObjects(imageData, pathObjects)
 println 'Done!'
 ```
 
-## Citing
+# Citing
 If you use this extension, you should cite the original Cellpose publication
 - Stringer, C., Wang, T., Michaelos, M. et al. 
 [*Cellpose: a generalist algorithm for cellular segmentation*](https://arxiv.org/abs/1806.03535)
@@ -175,7 +186,7 @@ Nat Methods 18, 100–106 (2021). https://doi.org/10.1038/s41592-020-01018-x
 **You should also cite the QuPath publication, as described [here](https://qupath.readthedocs.io/en/stable/docs/intro/citing.html).**
 
 
-## Building
+# Building
 You can build the QuPath Cellpose extension from source with
 
 ```bash
@@ -187,11 +198,43 @@ The output will be under `build/libs`.
 * `clean` removes anything old
 * `build` builds the QuPath extension as a *.jar* file and adds it to `libs`
 
-# Extra notes
+# Notes and debugging
+
+## Normalization
+
 Like the StarDist extension, we provide a normalization option `normalizePercentiles`.
-However. because Cellpose does its own normalization, and QuPath keeps the normalized image in 32-bit with no clipping, there is no effect from using the normalization. 
+However, the QuPath Stardist Extension that keeps the normalized image in 32-bit with no clipping.
+In turn, because Cellpose does its own normalization, there was no effect from using the normalization. 
+However, the QuPath Cellpose Extension adds a clipping of values below 0.0 and above 1.0 to the normalization.
 
-In case you need your own normalization, you need to [ask Cellpose to implement it or allow to deactivate normalization](https://github.com/MouseLand/cellpose/issues).
+> Note however that QuPath normalizes channels jointly rather than independently, so you might get some odd results
 
-# Ubuntu Error 13: Permission Denied
-[As per this post here](https://forum.image.sc/t/could-not-execute-system-command-in-qupath-thanks-to-groovy-script-and-java-processbuilder-class/61629/2?u=oburri), there is a permissions issue when using Ubuntu, which does not allow Java's `ProcessBuilder` to run. The current workaround is [to build QuPath from source](https://qupath.readthedocs.io/en/stable/docs/reference/building.html) in Ubuntu, which then allows the use of the `ProcessBuilder`, which is the magic piece of code that actually calls Cellpose.
+ [Cellpose has implemented turning off their normalization, but it is not yet part of the current cellpose release](https://github.com/MouseLand/cellpose/issues).
+
+## Preprocessing your data, extracting Color Deconvolution stains
+It has been useful to preprocess data to extract color-deconvolved channels feeding these to Cellpose, for example. This is where the `preprocess()` method is useful. 
+Depending on the export, one might need to inform cellpose of which channel is to be considered nuclear and which channel cytoplasmic. The method `cellposeChannels()` helps to set the order, as in the example below.
+```
+def stains = getCurrentImageData().getColorDeconvolutionStains()
+// ..
+// .. builder is initialized before this line
+.preprocess( ImageOps.Channels.deconvolve(stains),
+             ImageOps.Channels.extract(0, 1) ) // 0 for HTX and 1 for DAB
+. cellposeChannels(2, 1)                       // Use the second channel from the extracted image for the cytoplasm and the first channel for the nucleus in cellpose
+```
+## Overlap
+In case you end up with split detections, this is caused by the overlap calculation not being done correctly or by setting the `.diameter()` to 0 in order for cellpose to determine it automatically.
+In turn, this causes the QuPath extension to fail to extract tiles with sufficient overlap.
+Use `setOverlap( int )` in the builder to set the overlap (in pixels) to a value 2x larger than the largest object you are segmenting.
+
+
+### To find the overlap
+You can draw a line ROI across your largest object in QuPath and run the following one-line script
+```
+print "Selected Line length is " + Math.round(getSelectedObject().getROI().getLength()) + " pixels"
+```
+Double whatever value is output from the script and use it in `setOverlap( int )` in the builder.
+## Ubuntu Error 13: Permission Denied
+
+[As per this post here](https://forum.image.sc/t/could-not-execute-system-command-in-qupath-thanks-to-groovy-script-and-java-processbuilder-class/61629/2?u=oburri), there is a permissions issue when using Ubuntu, which does not allow Java's `ProcessBuilder` to run. 
+The current workaround is [to build QuPath from source](https://qupath.readthedocs.io/en/stable/docs/reference/building.html) in Ubuntu, which then allows the use of the `ProcessBuilder`, which is the magic piece of code that actually calls Cellpose.
