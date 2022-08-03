@@ -23,6 +23,7 @@ pip install torch --extra-index-url https://download.pytorch.org/whl/cu113
 <details>
   <summary>See the 'pip freeze' result</summary>
 
+```
 cellpose==2.0.5
 certifi @ file:///C:/Windows/TEMP/abs_e9b7158a-aa56-4a5b-87b6-c00d295b01fanefpc8_o/croots/recipe/certifi_1655968940823/work/certifi
 charset-normalizer==2.0.12
@@ -46,6 +47,7 @@ tqdm==4.64.0
 typing_extensions==4.2.0
 urllib3==1.26.9
 wincertstore==0.2
+```
 </details>
     
 Next, we look for the Python executable, **which we will need later when configuring the QuPath Cellpose extension**.
