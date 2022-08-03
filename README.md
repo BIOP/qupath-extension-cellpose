@@ -5,7 +5,7 @@ This repo adds some support to use 2D Cellpose within QuPath through a Python vi
 
 # Installation
 
-###Step 1: Install Cellpose
+## Step 1: Install Cellpose
 
 Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose).
 This extension will need to know the path to your Cellpose environment.
