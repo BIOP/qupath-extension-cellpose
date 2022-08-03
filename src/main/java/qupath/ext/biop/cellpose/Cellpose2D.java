@@ -94,12 +94,6 @@ public class Cellpose2D {
     public Double learningRate = null;
     public Integer batchSize = null;
     public double simplifyDistance = 0.0;
-    public double normPercentileMin = -1.0;
-    public double normPercentileMax = -1.0;
-
-    protected boolean useCellposeNormalization = true;
-    protected boolean useGlobalNorm = false;
-    protected int globalNormalizationScale = 8;
 
     protected Integer channel1 = 0;
     protected Integer channel2 = 0;
@@ -150,7 +144,7 @@ public class Cellpose2D {
     }
 
     /**
-     * Load a previouslt serialized builder.
+     * Load a previously serialized builder.
      * See {@link CellposeBuilder#CellposeBuilder(File)} and {@link CellposeBuilder#saveBuilder(String)}
      *
      * @param builderPath path to the builder JSON file.
@@ -280,7 +274,7 @@ public class Cellpose2D {
                 if (maskFile.exists()) {
                     logger.info("Getting objects for {}", maskFile);
 
-                    // thank you Pete for the ContourTracing Class
+                    // thank you, Pete for the ContourTracing Class
                     List<PathObject> detections = null;
                     try {
                         detections = ContourTracing.labelsToDetections( maskFile.toPath(), tilefile.getTile());
@@ -289,7 +283,7 @@ public class Cellpose2D {
                         // Clean Detections
                         detections = detections.parallelStream().map(det -> {
                             if (det.getROI().getGeometry().getNumGeometries() > 1) {
-                                // Detemine largest one
+                                // Determine largest one
                                 Geometry geom = det.getROI().getGeometry();
                                 double largestArea = geom.getGeometryN(0).getArea();
                                 int idx = 0;
@@ -728,7 +722,7 @@ public class Cellpose2D {
     }
 
     /**
-     * Displays a JavaFX graph as a dialog so you can inspect the Losses per epoch
+     * Displays a JavaFX graph as a dialog, so you can inspect the Losses per epoch
      */
     public void showTrainingGraph() {
         ResultsTable output = getTrainingResults();
@@ -764,11 +758,11 @@ public class Cellpose2D {
     }
 
     /**
-     * Saves the the images from two servers (typically a server with the original data and another with labels)
+     * Saves the images from two servers (typically a server with the original data and another with labels)
      * to the right directories as image/mask pairs, ready for cellpose
      *
      * @param annotations    the annotations in which to create RegionRequests to save
-     * @param imageName      thge desired name of the images (the position of the request will be appended to make them unique)
+     * @param imageName      the desired name of the images (the position of the request will be appended to make them unique)
      * @param originalServer the server that will contain the images
      * @param labelServer    the server that contains the labels
      * @param saveDirectory  the location where to save the pair of images
@@ -807,9 +801,8 @@ public class Cellpose2D {
     /**
      * Save training images for the project
      *
-     * @throws IOException an error in case the images cannot be saved
      */
-    private void saveTrainingImages() throws IOException {
+    private void saveTrainingImages() {
 
         Project<BufferedImage> project = QP.getProject();
         // Prepare location to save images

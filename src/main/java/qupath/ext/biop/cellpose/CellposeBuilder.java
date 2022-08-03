@@ -81,9 +81,6 @@ public class CellposeBuilder {
     private transient boolean saveBuilder;
     private transient String builderName;
     private double simplifyDistance = 0.0;
-    private boolean useCellposeNormalization = true;
-    private boolean useGlobalNorm = false;
-    private int globalNormalizationScale = 8;
     private double normPercentileMin = -1.0;
     private double normPercentileMax = -1.0;
     private int overlap;
@@ -158,7 +155,8 @@ public class CellposeBuilder {
         this.normPercentileMin = min;
         this.normPercentileMax = max;
 
-        //this.ops.add(ImageOps.Normalize.percentile(min, max));
+        this.ops.add(ImageOps.Normalize.percentile(min, max));
+        this.ops.add(ImageOps.Core.clip(0.0,1.0));
         return this;
     }
 
@@ -278,22 +276,6 @@ public class CellposeBuilder {
         return this;
     }
 
-    public CellposeBuilder useCellposeNormalization( boolean useCellposeNorm){
-        this.useCellposeNormalization = useCellposeNorm;
-        return this;
-    }
-
-    public CellposeBuilder useGlobalNormalization( boolean useGlobalNorm) {
-        this.useGlobalNorm = useGlobalNorm;
-        return this;
-    }
-
-    public CellposeBuilder globalNormalizationScale( int globalNormDownsampling ) {
-        this.globalNormalizationScale = globalNormDownsampling;
-        return this;
-    }
-
-
         /**
          * Sets the channels to use by cellpose, in case there is an issue with the order or the number of exported channels
          * @param channel1 the main channel
@@ -360,7 +342,9 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder useOmnipose() {
-        if( this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE) ) {
+        if( this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE) ||
+                this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2)) {
             this.useOmnipose = true;
         } else {
             logger.warn("--omni flag not available in {}", CellposeSetup.CellposeVersion.CELLPOSE);
@@ -670,16 +654,6 @@ public class CellposeBuilder {
 
         cellpose.invert = isInvert;
 
-        if (cellpose.useCellposeNormalization) logger.info("Using Cellpose Normalization (per tile).");
-        cellpose.useCellposeNormalization = useCellposeNormalization;
-
-        if (cellpose.useGlobalNorm && cellpose.useCellposeNormalization) {
-            logger.warn("You cannot use global normalization and enable 'use cellpose normalization' at the same time!. Will default to cellpose normalization (per tile).");
-        } else {
-            logger.info("Using global normalization with a downsampling factor of {}", globalNormalizationScale);
-            cellpose.useGlobalNorm = useGlobalNorm;
-            cellpose.globalNormalizationScale = globalNormalizationScale;
-        }
         cellpose.doCluster = doCluster;
         cellpose.excludeEdges = excludeEdges;
         cellpose.useOmnipose = useOmnipose;
@@ -713,10 +687,6 @@ public class CellposeBuilder {
         cellpose.learningRate = learningRate;
         cellpose.batchSize = batchSize;
 
-        cellpose.normPercentileMax = normPercentileMax;
-        cellpose.normPercentileMin = normPercentileMin;
-
-
         // Overlap for segmentation of tiles. Should be large enough that any object must be "complete"
         // in at least one tile for resolving overlaps
         if (this.overlap > 0) {
@@ -731,6 +701,9 @@ public class CellposeBuilder {
             }
         }
         logger.info("If tiling is necessary, {} pixels overlap will be taken between tiles", cellpose.overlap);
+
+        if (this.normPercentileMax > -1.0 && this.normPercentileMin > -1.0 )
+            logger.warn("You called the builder with normalization, values below 0 and above after normalization will be clipped");
 
         // Intersection over union threshold to deal with duplicates
         cellpose.iouThreshold = iouThreshold;
