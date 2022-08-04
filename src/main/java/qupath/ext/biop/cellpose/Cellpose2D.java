@@ -671,7 +671,8 @@ public class Cellpose2D {
 
         if (useGPU) cellposeArguments.add("--use_gpu");
 
-        if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1))
+        if ( cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) )
             cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
