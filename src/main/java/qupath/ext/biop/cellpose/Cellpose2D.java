@@ -52,12 +52,14 @@ import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.classes.PathClassFactory;
 import qupath.lib.projects.Project;
+import qupath.lib.projects.Projects;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.GeometryTools;
 import qupath.lib.roi.RoiTools;
 import qupath.lib.roi.interfaces.ROI;
 import qupath.lib.scripting.QP;
+import qupath.lib.gui.scripting.QPEx;
 import qupath.opencv.ops.ImageDataOp;
 import qupath.opencv.ops.ImageOps;
 import qupath.opencv.tools.OpenCVTools;
@@ -208,7 +210,7 @@ public class Cellpose2D {
         // 3. Pick up Label images and convert to PathObjects
 
         // Define temporary folder to work in
-        cellposeTempFolder = new File(QP.buildFilePath(QP.PROJECT_BASE_DIR, "cellpose-temp"));
+        cellposeTempFolder = new File(Projects.getBaseDirectory(QPEx.getQuPath().getProject()), "cellpose-temp");
         boolean mkdirs = cellposeTempFolder.mkdirs();
         if (!mkdirs)
             logger.info("Folder creation of {} was interrupted. Either the folder exists or there was a problem.", cellposeTempFolder);
