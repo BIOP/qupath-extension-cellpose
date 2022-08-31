@@ -689,7 +689,7 @@ public class CellposeBuilder {
 
         // Overlap for segmentation of tiles. Should be large enough that any object must be "complete"
         // in at least one tile for resolving overlaps
-        if (this.overlap > 0) {
+        if (this.overlap != null) {
             cellpose.overlap = this.overlap;
 
         } else { // The overlap was not set by the user
