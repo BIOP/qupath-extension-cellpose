@@ -83,7 +83,7 @@ public class CellposeBuilder {
     private double simplifyDistance = 0.0;
     private double normPercentileMin = -1.0;
     private double normPercentileMax = -1.0;
-    private int overlap;
+    private Integer overlap = null;
 
     /**
      * can create a cellpose builder from a serialized JSON version of this builder.
@@ -693,9 +693,9 @@ public class CellposeBuilder {
             cellpose.overlap = this.overlap;
 
         } else { // The overlap was not set by the user
-            if (diameter == 0.0) {
+            if (diameter.isNaN()) {
                 cellpose.overlap = 30 * 2; // 30 pixels (largest median object size of Cellpose models times 2.0 to be sure.
-                logger.warn("Diameter was set to {}. Default overlap used");
+                logger.warn("Diameter was not set. Default overlap used");
             } else {
                 cellpose.overlap = (int) Math.round(2 * diameter);
             }
