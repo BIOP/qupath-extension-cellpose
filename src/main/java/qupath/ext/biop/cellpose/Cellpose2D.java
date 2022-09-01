@@ -611,7 +611,23 @@ public class Cellpose2D {
         try {
             saveTrainingImages();
             runCellposeTraining();
-            return moveAndReturnModelFile();
+            File modelFile = moveAndReturnModelFile();
+
+            // Get the training results before overwriting the log with a new run
+            parseTrainingResults();
+
+            logger.info("Running the new model {} on the validation images to obtain labels for QC", modelFile.getName());
+            File tmp = this.cellposeTempFolder;
+            // Run the new cellpose model on the validation images
+            this.cellposeTempFolder = this.valDirectory;
+            String tmpModel = this.model;
+            this.model = modelFile.getAbsolutePath();
+            runCellpose();
+            // Make sure things are back the way they were
+            this.cellposeTempFolder = tmp;
+            this.model = tmpModel;
+
+            return modelFile;
 
         } catch (IOException | InterruptedException e) {
             logger.error(e.getMessage(), e);
