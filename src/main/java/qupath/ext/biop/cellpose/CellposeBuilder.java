@@ -5,6 +5,7 @@ import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.analysis.features.ObjectMeasurements;
+import qupath.lib.gui.scripting.QPEx;
 import qupath.lib.images.servers.ColorTransforms;
 import qupath.lib.images.servers.PixelCalibration;
 import qupath.lib.images.servers.PixelType;
@@ -13,6 +14,7 @@ import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
 import qupath.lib.objects.classes.PathClassFactory;
+import qupath.lib.projects.Projects;
 import qupath.lib.roi.interfaces.ROI;
 import qupath.lib.scripting.QP;
 import qupath.opencv.ops.ImageOp;
@@ -664,6 +666,8 @@ public class CellposeBuilder {
         if (modelDirectory == null) {
             modelDirectory = new File(quPathProjectDir, "models");
         }
+
+        modelDirectory.mkdirs();
 
         // Define training and validation directories inside the QuPath Project
         File groundTruthDirectory = new File(quPathProjectDir, "cellpose-training");
