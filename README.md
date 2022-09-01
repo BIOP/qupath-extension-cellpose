@@ -133,6 +133,12 @@ cellpose.showTrainingGraph()
 [All options in Cellpose](https://github.com/MouseLand/cellpose/blob/45f1a3c640efb8ca7d252712620af6f58d024c55/cellpose/__main__.py#L36) have not been transferred. 
 In case that this might be of use to you, please [open an issue](https://github.com/BIOP/qupath-extension-cellpose/issues). 
 
+### Training Validation
+You can find a `Quality Control Cellpose` notebook in the `QC` folder of this repository. This notebook is an adaptation of the Quality Control part of a [ZeroCostDL4Mic Notebook that was made for cellpose](https://colab.research.google.com/github/HenriquesLab/ZeroCostDL4Mic/blob/master/Colab_notebooks/Beta%20notebooks/Cellpose_2D_ZeroCostDL4Mic.ipynb)
+
+Basically, when you train using this extension, it will first train your model as expected. At the end, it will save the predictions of cellpose from all your "Validation" class rectangles into the `cellpose-training/test` folder. 
+You can then feed that folder to the Jupyter Notebook to get some statistics on your training results. 
+
 ## Prediction 
 
 Running Cellpose is done via a script and is very similar to the excellent [QuPath StarDist Extension](https://github.com/qupath/qupath-extension-stardist)
