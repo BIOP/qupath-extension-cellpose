@@ -133,6 +133,9 @@ public class Cellpose2D {
 
     private String[] theLog;
 
+    // Results table from the training
+    private ResultsTable trainingResults = null;
+
     /**
      * Create a builder to customize detection parameters.
      * This accepts either Text describing the built-in models from cellpose (cyto, cyto2, nuc)
@@ -627,13 +630,13 @@ public class Cellpose2D {
         VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeSetup.getEnvironmentNameOrPath(), cellposeSetup.getEnvironmentType(), this.getClass().getSimpleName() + "-train");
 
         // This is the list of commands after the 'python' call
-
         List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-W", "ignore", "-m", "cellpose"));
 
         cellposeArguments.add("--train");
 
         cellposeArguments.add("--dir");
         cellposeArguments.add("" + trainDirectory.getAbsolutePath());
+
         cellposeArguments.add("--test_dir");
         cellposeArguments.add("" + valDirectory.getAbsolutePath());
 
@@ -695,12 +698,18 @@ public class Cellpose2D {
     }
 
     /**
-     * Returns a parsed version of the cellpose log as a ResultsTable with columns
+     *  Returns a parsed version of the cellpose log as a ResultsTable with columns
      * Epoch, Time, Loss, Loss Test and LR
      * @return an ImageJ ResultsTable that can be displayed with {@link ResultsTable#show(String)}
      */
-    public ResultsTable getTrainingResults() {
-        ResultsTable cleanLog = new ResultsTable();
+    public ResultsTable getTrainingResults() { return this.trainingResults; }
+
+    /**
+     * Returns a parsed version of the cellpose log as a ResultsTable with columns
+     * Epoch, Time, Loss, Loss Test and LR
+     */
+    private void parseTrainingResults() {
+        this.trainingResults = new ResultsTable();
 
         if (this.theLog != null) {
             // Try to parse the output of Cellpose to give meaningful information to the user. This is very old school
@@ -712,23 +721,22 @@ public class Cellpose2D {
             for (String line : this.theLog) {
                 m = pattern.matcher(line);
                 if (m.find()) {
-                    cleanLog.incrementCounter();
-                    cleanLog.addValue("Epoch", Double.parseDouble(m.group(1)));
-                    cleanLog.addValue("Time[s]", Double.parseDouble(m.group(2)));
-                    cleanLog.addValue("Loss", Double.parseDouble(m.group(3)));
-                    cleanLog.addValue("Loss Test", Double.parseDouble(m.group(4)));
-                    cleanLog.addValue("LR", Double.parseDouble(m.group(5)));
+                    this.trainingResults.incrementCounter();
+                    this.trainingResults.addValue("Epoch", Double.parseDouble(m.group(1)));
+                    this.trainingResults.addValue("Time[s]", Double.parseDouble(m.group(2)));
+                    this.trainingResults.addValue("Loss", Double.parseDouble(m.group(3)));
+                    this.trainingResults.addValue("Loss Test", Double.parseDouble(m.group(4)));
+                    this.trainingResults.addValue("LR", Double.parseDouble(m.group(5)));
                 }
             }
         }
-        return cleanLog;
     }
 
     /**
      * Displays a JavaFX graph as a dialog, so you can inspect the Losses per epoch
      */
     public void showTrainingGraph() {
-        ResultsTable output = getTrainingResults();
+        ResultsTable output = this.trainingResults;
 
         final NumberAxis xAxis = new NumberAxis();
         final NumberAxis yAxis = new NumberAxis();
@@ -820,11 +828,14 @@ public class Cellpose2D {
                 String imageName = GeneralTools.getNameWithoutExtension(imageData.getServer().getMetadata().getName());
 
                 Collection<PathObject> allAnnotations = imageData.getHierarchy().getAnnotationObjects();
-                // Get Squares for Training
+                // Get Squares for Training, Validation and Testing
                 List<PathObject> trainingAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Training")).collect(Collectors.toList());
                 List<PathObject> validationAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Validation")).collect(Collectors.toList());
 
-                logger.info("Found {} Training objects and {} Validation Objects in image {}", trainingAnnotations.size(), validationAnnotations.size(), imageName);
+                List<PathObject> testingAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Test")).collect(Collectors.toList());
+
+
+                logger.info("Found {} Training objects and {} Validation objects in image {}", trainingAnnotations.size(), validationAnnotations.size(), imageName);
                 if (!trainingAnnotations.isEmpty() || !validationAnnotations.isEmpty()) {
                     // Make the server using the required ops
                     ImageServer<BufferedImage> processed = ImageOps.buildServer(imageData, op, imageData.getServer().getPixelCalibration(), 2048, 2048);
@@ -858,8 +869,9 @@ public class Cellpose2D {
         File[] all = cellPoseModelFolder.listFiles();
         Optional<File> cellPoseModel = Arrays.stream(Objects.requireNonNull(all)).filter(f -> f.getName().contains("cellpose")).findFirst();
         if (cellPoseModel.isPresent()) {
-            logger.info("Found model file at {} ", cellPoseModel);
             File model = cellPoseModel.get();
+            logger.info("Found model file at {} ", model);
+
             File newModel = new File(modelDirectory, model.getName());
             FileUtils.copyFile(model, newModel);
             return newModel;
