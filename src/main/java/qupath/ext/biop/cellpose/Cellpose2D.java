@@ -831,7 +831,7 @@ public class Cellpose2D {
      */
     private void saveTrainingImages() {
 
-        Project<BufferedImage> project = QP.getProject();
+        Project<BufferedImage> project = QPEx.getQuPath().getProject();
         // Prepare location to save images
 
         // SAve the images in parallel to go a bit faster
