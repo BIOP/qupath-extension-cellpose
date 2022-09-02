@@ -316,7 +316,7 @@ public class Cellpose2D {
 
             // Remove the detections that are not contained within the parent
             Geometry mask = parent.getROI().getGeometry();
-            filteredDetections = filteredDetections.stream().filter(t -> mask.covers(t.getROI().getGeometry())).collect(Collectors.toList());
+            //filteredDetections = filteredDetections.stream().filter(t -> mask.covers(t.getROI().getGeometry())).collect(Collectors.toList());
 
             // Convert to detections, dilating to approximate cells if necessary
             // Drop cells if they fail (rather than catastrophically give up)
