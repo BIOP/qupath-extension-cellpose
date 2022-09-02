@@ -679,7 +679,6 @@ public class CellposeBuilder {
 
         // Cleanup a previous run
         try {
-            FileUtils.cleanDirectory(trainDirectory);
             FileUtils.cleanDirectory(valDirectory);
         } catch (IOException e) {
             logger.error(e.getMessage(), e);

@@ -609,6 +609,10 @@ public class Cellpose2D {
     public File train() {
 
         try {
+
+            // Clear a previous run
+            FileUtils.cleanDirectory(this.trainDirectory);
+
             saveTrainingImages();
             runCellposeTraining();
             File modelFile = moveAndReturnModelFile();
