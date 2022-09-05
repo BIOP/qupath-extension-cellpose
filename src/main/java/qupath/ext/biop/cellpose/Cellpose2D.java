@@ -19,10 +19,13 @@ package qupath.ext.biop.cellpose;
 import ij.IJ;
 import ij.ImagePlus;
 import ij.measure.ResultsTable;
+import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.chart.LineChart;
 import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.Dialog;
+import javafx.scene.image.WritableImage;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.bytedeco.opencv.opencv_core.Mat;
@@ -38,7 +41,10 @@ import qupath.lib.analysis.images.ContourTracing;
 import qupath.lib.common.ColorTools;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.geom.ImmutableDimension;
+import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.dialogs.Dialogs;
+import qupath.lib.gui.scripting.QPEx;
+import qupath.lib.gui.tools.GuiTools;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.ImageServer;
 import qupath.lib.images.servers.LabeledImageServer;
@@ -59,12 +65,13 @@ import qupath.lib.roi.GeometryTools;
 import qupath.lib.roi.RoiTools;
 import qupath.lib.roi.interfaces.ROI;
 import qupath.lib.scripting.QP;
-import qupath.lib.gui.scripting.QPEx;
 import qupath.opencv.ops.ImageDataOp;
 import qupath.opencv.ops.ImageOps;
 import qupath.opencv.tools.OpenCVTools;
 
+import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
+import java.awt.image.RenderedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
@@ -135,6 +142,8 @@ public class Cellpose2D {
 
     // Results table from the training
     private ResultsTable trainingResults = null;
+    private ResultsTable qcResults = null;
+    private File modelFile = null;
 
     /**
      * Create a builder to customize detection parameters.
@@ -213,7 +222,8 @@ public class Cellpose2D {
         // 3. Pick up Label images and convert to PathObjects
 
         // Define temporary folder to work in
-        cellposeTempFolder = new File(Projects.getBaseDirectory(QPEx.getQuPath().getProject()), "cellpose-temp");
+        cellposeTempFolder = getCellposeTempFolder();
+
         boolean mkdirs = cellposeTempFolder.mkdirs();
         if (!mkdirs)
             logger.info("Folder creation of {} was interrupted. Either the folder exists or there was a problem.", cellposeTempFolder);
@@ -282,7 +292,7 @@ public class Cellpose2D {
                     // thank you, Pete for the ContourTracing Class
                     List<PathObject> detections = null;
                     try {
-                        detections = ContourTracing.labelsToDetections( maskFile.toPath(), tilefile.getTile());
+                        detections = ContourTracing.labelsToDetections(maskFile.toPath(), tilefile.getTile());
 
 
                         // Clean Detections
@@ -381,6 +391,10 @@ public class Cellpose2D {
         // Update the hierarchy
         imageData.getHierarchy().fireHierarchyChangedEvent(this);
 
+    }
+
+    private File getCellposeTempFolder() {
+        return new File(Projects.getBaseDirectory(QPEx.getQuPath().getProject()), "cellpose-temp");
     }
 
     private PathObject convertToObject(PathObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
@@ -562,7 +576,7 @@ public class Cellpose2D {
             cellposeArguments.add("" + flowThreshold);
         }
 
-        if (!maskThreshold.isNaN() ) {
+        if (!maskThreshold.isNaN()) {
             if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE) || cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
                 cellposeArguments.add("--cellprob_threshold");
             else
@@ -581,14 +595,14 @@ public class Cellpose2D {
 
         cellposeArguments.add("--no_npy");
 
-        if ( !(cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
-                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) ))
+        if (!(cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2)))
             cellposeArguments.add("--resample");
 
         if (useGPU) cellposeArguments.add("--use_gpu");
 
-        if ( cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
-                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) )
+        if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
             cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
@@ -604,6 +618,7 @@ public class Cellpose2D {
      * 1. Saving the images
      * 2. running cellpose
      * 3. moving the resulting model file to the desired directory
+     *
      * @return a link to the model file, which can be displayed
      */
     public File train() {
@@ -614,22 +629,18 @@ public class Cellpose2D {
             FileUtils.cleanDirectory(this.trainDirectory);
 
             saveTrainingImages();
+
             runCellposeTraining();
-            File modelFile = moveAndReturnModelFile();
+
+            this.modelFile = moveAndReturnModelFile();
 
             // Get the training results before overwriting the log with a new run
-            parseTrainingResults();
+            this.trainingResults = parseTrainingResults();
 
-            logger.info("Running the new model {} on the validation images to obtain labels for QC", modelFile.getName());
-            File tmp = this.cellposeTempFolder;
-            // Run the new cellpose model on the validation images
-            this.cellposeTempFolder = this.valDirectory;
-            String tmpModel = this.model;
-            this.model = modelFile.getAbsolutePath();
-            runCellpose();
-            // Make sure things are back the way they were
-            this.cellposeTempFolder = tmp;
-            this.model = tmpModel;
+            // Get cellpose masks from the validation
+            runCellposeOnValidationImages();
+
+            this.qcResults = runCellposeQC();
 
             return modelFile;
 
@@ -641,6 +652,7 @@ public class Cellpose2D {
 
     /**
      * Configures and runs the {@link VirtualEnvironmentRunner} that will ultimately run cellpose training
+     *
      * @throws IOException          Exception in case files could not be read
      * @throws InterruptedException Exception in case of command thread has some failing
      */
@@ -696,8 +708,8 @@ public class Cellpose2D {
 
         if (useGPU) cellposeArguments.add("--use_gpu");
 
-        if ( cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
-                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2) )
+        if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
             cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
@@ -709,8 +721,83 @@ public class Cellpose2D {
     }
 
     /**
+     * Make a cellpose run on the validation images (test) folder
+     * This will create 'cp_masks' images, which can be read when running QC
+     */
+    private void runCellposeOnValidationImages() {
+
+        // Assume that cellpose training was already run and run cellpose again on the /test folder
+        logger.info("Running the new model {} on the validation images to obtain labels for QC", this.modelFile.getName());
+
+        File tmp = this.cellposeTempFolder;
+        this.cellposeTempFolder = this.valDirectory;
+
+        String tmpModel = this.model;
+        this.model = modelFile.getAbsolutePath();
+
+        try {
+            runCellpose();
+        } catch (InterruptedException | IOException e) {
+            logger.error(e.getMessage(), e);
+        }
+        // Make sure things are back the way they were
+        this.cellposeTempFolder = tmp;
+        this.model = tmpModel;
+    }
+
+    /**
+     * Runs the python script "run-cellpose-qc.py", which should be in the QuPath Extensions folder
+     *
+     * @return a results table with the QC statistics
+     * @return the results table with the QC metrics or null
+     * @throws IOException
+     * @throws InterruptedException
+     */
+    private ResultsTable runCellposeQC() throws IOException, InterruptedException {
+
+        File qcFolder = getQCFolder();
+
+        qcFolder.mkdirs();
+
+        // Let's check if the QC notebook is available in the 'extensions' folder
+        File extensionsDir = QuPathGUI.getExtensionDirectory();
+        File qcPythonFile = new File(extensionsDir, "run-cellpose-qc.py");
+
+        if (!qcPythonFile.exists()) {
+            logger.warn("File {} was not found in {}.\nPlease download it from {}", qcPythonFile.getName(),
+                    extensionsDir.getAbsolutePath(),
+                    new CellposeExtension().getRepository().getUrlString());
+            return null;
+        }
+
+        // Start the Virtual Environment Runner
+        VirtualEnvironmentRunner qcRunner = new VirtualEnvironmentRunner(cellposeSetup.getEnvironmentNameOrPath(), cellposeSetup.getEnvironmentType(), this.getClass().getSimpleName() + "-qc");
+        List<String> qcArguments = new ArrayList<>(Arrays.asList(qcPythonFile.getAbsolutePath(), this.valDirectory.getAbsolutePath(), this.modelFile.getName()));
+
+        qcRunner.setArguments(qcArguments);
+
+        qcRunner.runCommand();
+
+        // The results are stored in the validation directory, open them as a results table
+        File qcResults = new File(this.valDirectory, "QC-Results" + File.separator + "Quality_Control for " + this.modelFile.getName() + ".csv");
+
+        if (!qcResults.exists()) {
+            logger.warn("No QC results file name {} found in {}\nCheck in the logger for a potential reason", qcResults.getName(), qcResults.getParent());
+            logger.warn("In case you are missing the 'skimage' module, simply run 'pip install scikit-image' in your cellpose environment");
+            return null;
+        }
+
+        // Move this csv file into the QC folder in the main QuPath project
+        File finalQCResultFile = new File(qcFolder, qcResults.getName());
+        FileUtils.moveFile(qcResults, finalQCResultFile);
+
+        return ResultsTable.open(finalQCResultFile.getAbsolutePath());
+    }
+
+    /**
      * Returns the log from running the cellpose command, with any error messages and status updates of the cellpose process
      * You can use this during training or prediction
+     *
      * @return the entire dump of the cellpose log, each line is one element of the String array.
      */
     public String[] getOutputLog() {
@@ -718,18 +805,32 @@ public class Cellpose2D {
     }
 
     /**
-     *  Returns a parsed version of the cellpose log as a ResultsTable with columns
+     * Returns a parsed version of the cellpose log as a ResultsTable with columns
      * Epoch, Time, Loss, Loss Test and LR
+     *
      * @return an ImageJ ResultsTable that can be displayed with {@link ResultsTable#show(String)}
      */
-    public ResultsTable getTrainingResults() { return this.trainingResults; }
+    public ResultsTable getTrainingResults() {
+        return this.trainingResults;
+    }
+
+    /**
+     * Get the results table associated with the Quality Control run
+     *
+     * @return the results table with teh QC metrics
+     */
+    public ResultsTable getQCResults() {
+        return this.qcResults;
+    }
 
     /**
      * Returns a parsed version of the cellpose log as a ResultsTable with columns
      * Epoch, Time, Loss, Loss Test and LR
+     *
+     * @return a parsed results table
      */
-    private void parseTrainingResults() {
-        this.trainingResults = new ResultsTable();
+    private ResultsTable parseTrainingResults() {
+        ResultsTable trainingResults = new ResultsTable();
 
         if (this.theLog != null) {
             // Try to parse the output of Cellpose to give meaningful information to the user. This is very old school
@@ -741,22 +842,34 @@ public class Cellpose2D {
             for (String line : this.theLog) {
                 m = pattern.matcher(line);
                 if (m.find()) {
-                    this.trainingResults.incrementCounter();
-                    this.trainingResults.addValue("Epoch", Double.parseDouble(m.group(1)));
-                    this.trainingResults.addValue("Time[s]", Double.parseDouble(m.group(2)));
-                    this.trainingResults.addValue("Loss", Double.parseDouble(m.group(3)));
-                    this.trainingResults.addValue("Loss Test", Double.parseDouble(m.group(4)));
-                    this.trainingResults.addValue("LR", Double.parseDouble(m.group(5)));
+                    trainingResults.incrementCounter();
+                    trainingResults.addValue("Epoch", Double.parseDouble(m.group(1)));
+                    trainingResults.addValue("Time[s]", Double.parseDouble(m.group(2)));
+                    trainingResults.addValue("Loss", Double.parseDouble(m.group(3)));
+                    trainingResults.addValue("Loss Test", Double.parseDouble(m.group(4)));
+                    trainingResults.addValue("LR", Double.parseDouble(m.group(5)));
                 }
             }
         }
+
+        //Save results to QC
+        File qcTrainingResults = new File(getQCFolder(), "Training Result - " + modelFile.getName());
+
+        logger.info("Saving Training Results to {}", qcTrainingResults.getParent());
+
+        trainingResults.save(qcTrainingResults.getAbsolutePath());
+        return trainingResults;
     }
 
     /**
      * Displays a JavaFX graph as a dialog, so you can inspect the Losses per epoch
+     * also saves the graph to the QC folder if requested
+     *
+     * @param save boolean deciding whether plot should be saved
      */
-    public void showTrainingGraph() {
+    public void showTrainingGraph(boolean show, boolean save) {
         ResultsTable output = this.trainingResults;
+        File qcFolder = getQCFolder();
 
         final NumberAxis xAxis = new NumberAxis();
         final NumberAxis yAxis = new NumberAxis();
@@ -783,9 +896,48 @@ public class Cellpose2D {
         }
         lineChart.getData().add(loss);
         lineChart.getData().add(lossTest);
+        GuiTools.runOnApplicationThread(() -> {
+            Dialog<ButtonType> dialog = Dialogs.builder().content(lineChart).title("Cellpose Training").buttons("Close").buttons(ButtonType.CLOSE).build();
 
-        Dialogs.builder().content(lineChart).title("Cellpose Training").buttons("Close").buttons(ButtonType.CLOSE).show();
+            if (show) dialog.show();
 
+            if (save) {
+                // Save a copy as well in the QC folder
+                String trainingGraph = "Training Result - " + this.modelFile.getName() + ".png";
+
+                File trainingGraphFile = new File(qcFolder, trainingGraph);
+                WritableImage writableImage = new WritableImage((int) dialog.getWidth(), (int) dialog.getHeight());
+                dialog.getDialogPane().snapshot(null, writableImage);
+                RenderedImage renderedImage = SwingFXUtils.fromFXImage(writableImage, null);
+
+                logger.info("Saving Training Graph to {}", trainingGraphFile.getName());
+
+                try {
+                    ImageIO.write(renderedImage, "png", trainingGraphFile);
+                } catch (IOException e) {
+                    logger.error("Could not write Training Graph image {} in {}.", trainingGraphFile.getName(), trainingGraphFile.getParent());
+                    logger.error("Error Message", e);
+                }
+            }
+        });
+    }
+
+    /**
+     * Overloaded method for backwards compatibility.
+     */
+    public void showTrainingGraph() {
+        showTrainingGraph(true, true);
+    }
+
+    /**
+     * Get the location of the QC folder
+     *
+     * @return
+     */
+    private File getQCFolder() {
+        File projectFolder = QP.getProject().getPath().getParent().toFile();
+        File qcFolder = new File(projectFolder, "QC");
+        return qcFolder;
     }
 
     /**
@@ -831,7 +983,6 @@ public class Cellpose2D {
 
     /**
      * Save training images for the project
-     *
      */
     private void saveTrainingImages() {
 
@@ -856,6 +1007,7 @@ public class Cellpose2D {
 
 
                 logger.info("Found {} Training objects and {} Validation objects in image {}", trainingAnnotations.size(), validationAnnotations.size(), imageName);
+
                 if (!trainingAnnotations.isEmpty() || !validationAnnotations.isEmpty()) {
                     // Make the server using the required ops
                     ImageServer<BufferedImage> processed = ImageOps.buildServer(imageData, op, imageData.getServer().getPixelCalibration(), 2048, 2048);
@@ -876,13 +1028,13 @@ public class Cellpose2D {
         });
     }
 
-        /**
-         * Checks the default folder where cellpose drops a trained model (../train/models/)
-         * and moves it to the defined modelDirectory using {@link #modelDirectory}
-         *
-         * @return the File of the moved model
-         * @throws IOException in case there was a problem moving the file
-         */
+    /**
+     * Checks the default folder where cellpose drops a trained model (../train/models/)
+     * and moves it to the defined modelDirectory using {@link #modelDirectory}
+     *
+     * @return the File of the moved model
+     * @throws IOException in case there was a problem moving the file
+     */
     private File moveAndReturnModelFile() throws IOException {
         File cellPoseModelFolder = new File(trainDirectory, "models");
         // Find the first file in there
@@ -891,9 +1043,9 @@ public class Cellpose2D {
         if (cellPoseModel.isPresent()) {
             File model = cellPoseModel.get();
             logger.info("Found model file at {} ", model);
-
             File newModel = new File(modelDirectory, model.getName());
             FileUtils.copyFile(model, newModel);
+            logger.info("Model file {} moved to {}", newModel.getName(), newModel.getParent());
             return newModel;
         }
         return null;
