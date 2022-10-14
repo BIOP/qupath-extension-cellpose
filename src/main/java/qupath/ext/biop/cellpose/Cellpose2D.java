@@ -38,6 +38,8 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.biop.cmd.VirtualEnvironmentRunner;
 import qupath.lib.analysis.features.ObjectMeasurements;
 import qupath.lib.analysis.images.ContourTracing;
+import qupath.lib.analysis.images.SimpleImage;
+import qupath.lib.analysis.images.SimpleImages;
 import qupath.lib.common.ColorTools;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.geom.ImmutableDimension;
@@ -250,7 +252,7 @@ public class Cellpose2D {
         List<PathTile> allTiles = parents.parallelStream().map(parent -> {
 
             // Get for each annotation the individual overlapping tiles
-            Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileWidth * finalDownsample), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileHeight * finalDownsample), true, overlap);
+            Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileWidth * finalDownsample), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileHeight * finalDownsample), true, overlap * finalDownsample);
 
             // Keep a reference to the images here while they are being saved
             logger.info("Saving images for {} tiles", rois.size());
@@ -1049,6 +1051,25 @@ public class Cellpose2D {
             return newModel;
         }
         return null;
+    }
+
+    private Collection<CandidateObject> readObjectsFromFile(File maskFile, RegionRequest region) throws IOException {
+        BufferedImage bfImage = ImageIO.read(maskFile);
+        SimpleImage image = ContourTracing.extractBand(bfImage.getRaster(), 0);
+        float[] pixels = SimpleImages.getPixels(image, true);
+
+        Map<Number, CandidateObject> candidates = new TreeMap<>();
+        float lastLabel = Float.NaN;
+        for (float p : pixels) {
+            if (p >= 1 && p != lastLabel && !candidates.containsKey(p)) {
+                Geometry geometry = ContourTracing.createTracedGeometry(image, p, p, region);
+                if (geometry != null && !geometry.isEmpty())
+                    candidates.put(p, new CandidateObject(geometry));
+                lastLabel = p;
+            }
+        }
+        // Ignore the IDs, because they will be the same across different images and we don't really need them
+        return candidates.values();
     }
 
     /**
