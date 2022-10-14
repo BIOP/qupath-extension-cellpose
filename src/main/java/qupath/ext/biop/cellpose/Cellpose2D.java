@@ -31,6 +31,7 @@ import org.apache.commons.io.FilenameUtils;
 import org.bytedeco.opencv.opencv_core.Mat;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryCollection;
 import org.locationtech.jts.index.strtree.STRtree;
 import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
@@ -284,7 +285,7 @@ public class Cellpose2D {
         allTiles.parallelStream().forEach(tileMap -> {
             PathObject parent = tileMap.getObject();
             // Read each image
-            List<PathObject> allDetections = Collections.synchronizedList(new ArrayList<>());
+            List<CandidateObject> allCandidates = Collections.synchronizedList(new ArrayList<>());
             tileMap.getTileFiles().parallelStream().forEach(tilefile -> {
                 File ori = tilefile.getFile();
                 File maskFile = new File(ori.getParent(), FilenameUtils.removeExtension(ori.getName()) + "_cp_masks.tif");
@@ -292,39 +293,22 @@ public class Cellpose2D {
                     logger.info("Getting objects for {}", maskFile);
 
                     // thank you, Pete for the ContourTracing Class
-                    List<PathObject> detections = null;
+                    Collection<CandidateObject> candidates = null;
                     try {
-                        detections = ContourTracing.labelsToDetections(maskFile.toPath(), tilefile.getTile());
+                        candidates = readObjectsFromFile(maskFile, tilefile.getTile());
 
-
-                        // Clean Detections
-                        detections = detections.parallelStream().map(det -> {
-                            if (det.getROI().getGeometry().getNumGeometries() > 1) {
-                                // Determine largest one
-                                Geometry geom = det.getROI().getGeometry();
-                                double largestArea = geom.getGeometryN(0).getArea();
-                                int idx = 0;
-                                for (int i = 0; i < geom.getNumGeometries(); i++) {
-                                    if (geom.getGeometryN(i).getArea() > largestArea) idx = i;
-                                }
-                                ROI newROI = GeometryTools.geometryToROI(geom.getGeometryN(idx), det.getROI().getImagePlane());
-                                return PathObjects.createDetectionObject(newROI, det.getPathClass(), det.getMeasurementList());
-                            } else {
-                                return det;
-                            }
-                        }).collect(Collectors.toList());
 
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
                     logger.info("Getting objects for {} Done", maskFile);
 
-                    allDetections.addAll(detections);
+                    allCandidates.addAll(candidates);
                 }
             });
 
             // Filter Detections: Remove overlaps
-            List<PathObject> filteredDetections = filterDetections(allDetections);
+            List<CandidateObject> filteredDetections = filterDetections(allCandidates);
 
             // Remove the detections that are not contained within the parent
             Geometry mask = parent.getROI().getGeometry();
@@ -332,10 +316,10 @@ public class Cellpose2D {
 
             // Convert to detections, dilating to approximate cells if necessary
             // Drop cells if they fail (rather than catastrophically give up)
-            filteredDetections = filteredDetections.parallelStream()
+            List<PathObject> finalObjects = filteredDetections.parallelStream()
                     .map(n -> {
                         try {
-                            return convertToObject(n, n.getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
+                            return convertToObject(n, tileMap.getObject().getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
                         } catch (Exception e) {
                             logger.warn("Error converting to object: " + e.getLocalizedMessage(), e);
                             return null;
@@ -348,19 +332,19 @@ public class Cellpose2D {
                 logger.info("Resolving cell overlaps for {}", parent);
                 if (creatorFun != null) {
                     // It's awkward, but we need to temporarily convert to cells and back
-                    var cells = filteredDetections.stream().map(Cellpose2D::objectToCell).collect(Collectors.toList());
+                    var cells = finalObjects.stream().map(Cellpose2D::objectToCell).collect(Collectors.toList());
                     cells = CellTools.constrainCellOverlaps(cells);
-                    filteredDetections = cells.stream().map(c -> cellToObject(c, creatorFun)).collect(Collectors.toList());
+                    finalObjects = cells.stream().map(c -> cellToObject(c, creatorFun)).collect(Collectors.toList());
                 } else
-                    filteredDetections = CellTools.constrainCellOverlaps(filteredDetections);
+                    finalObjects = CellTools.constrainCellOverlaps(finalObjects);
             }
 
             // Add measurements
             if (measureShape)
-                filteredDetections.parallelStream().forEach(c -> ObjectMeasurements.addShapeMeasurements(c, cal));
+                finalObjects.parallelStream().forEach(c -> ObjectMeasurements.addShapeMeasurements(c, cal));
 
             // Add intensity measurements, if needed
-            if (!filteredDetections.isEmpty() && !measurements.isEmpty()) {
+            if (!finalObjects.isEmpty() && !measurements.isEmpty()) {
                 logger.info("Making measurements for {}", parent);
                 var stains = imageData.getColorDeconvolutionStains();
                 var builder = new TransformedServerBuilder(server);
@@ -375,7 +359,7 @@ public class Cellpose2D {
 
                 var server2 = builder.build();
 
-                filteredDetections.parallelStream().forEach(cell -> {
+                finalObjects.parallelStream().forEach(cell -> {
                     try {
                         ObjectMeasurements.addIntensityMeasurements(server2, cell, finalDownsample, measurements, compartments);
                     } catch (IOException e) {
@@ -387,7 +371,7 @@ public class Cellpose2D {
             // Assign the objects to the parent object
             parent.setLocked(true);
             parent.clearPathObjects();
-            tileMap.getObject().addPathObjects(filteredDetections);
+            tileMap.getObject().addPathObjects(finalObjects);
         });
 
         // Update the hierarchy
@@ -399,8 +383,8 @@ public class Cellpose2D {
         return new File(Projects.getBaseDirectory(QPEx.getQuPath().getProject()), "cellpose-temp");
     }
 
-    private PathObject convertToObject(PathObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
-        var geomNucleus = object.getROI().getGeometry();
+    private PathObject convertToObject(CandidateObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
+        var geomNucleus = object.geometry;
         geomNucleus = simplify(geomNucleus);
 
         PathObject pathObject;
@@ -410,7 +394,7 @@ public class Cellpose2D {
                 geomCell = GeometryTools.attemptOperation(geomCell, g -> g.intersection(mask));
 
             if (geomCell.isEmpty()) {
-                logger.warn("Empty cell boundary at {} will be skipped", object.getROI().getGeometry().getCentroid());
+                logger.warn("Empty cell boundary at {} will be skipped", object.geometry.getCentroid());
                 return null;
             }
 
@@ -447,42 +431,80 @@ public class Cellpose2D {
     /**
      * Filters the overlapping detections based on their size, a bit like CellDetection and applying the iou threshold
      *
-     * @param rawDetections the list of detections to filter
+     * @param rawCandidates the list of detections to filter
      * @return a list with the filtered results
      */
-    private List<PathObject> filterDetections(List<PathObject> rawDetections) {
+    private List<CandidateObject> filterDetections(Collection<CandidateObject> rawCandidates) {
 
         // Sort by size
-        rawDetections.sort(Comparator.comparingDouble(o -> -1 * o.getROI().getArea()));
+        List<CandidateObject> candidateList = rawCandidates.stream().collect(Collectors.toList());
+        candidateList.sort(Comparator.comparingDouble(o -> -1 * o.area));
 
         // Create array of detections to keep & to skip
-        var detections = new LinkedHashSet<PathObject>();
-        var skippedDetections = new HashSet<PathObject>();
+        var retainedObjects = new LinkedHashSet<CandidateObject>();
+        var skippedObjects = new HashSet<CandidateObject>();
         int skipErrorCount = 0;
 
         // Create a spatial cache to find overlaps more quickly
         // (Because of later tests, we don't need to update envelopes even though geometries may be modified)
-        Map<PathObject, Envelope> envelopes = new HashMap<>();
+        Map<CandidateObject, Envelope> envelopes = new HashMap<>();
         var tree = new STRtree();
-        for (var det : rawDetections) {
-            var env = det.getROI().getGeometry().getEnvelopeInternal();
+        for (var det : candidateList) {
+            var env = det.geometry.getEnvelopeInternal();
             envelopes.put(det, env);
             tree.insert(env, det);
         }
 
-        for (var detection : rawDetections) {
-            if (skippedDetections.contains(detection))
+        for (CandidateObject currentCandidate : candidateList) {
+            if (skippedObjects.contains(currentCandidate))
                 continue;
 
-            detections.add(detection);
-            var envelope = envelopes.get(detection);
+            retainedObjects.add(currentCandidate);
+            var envelope = envelopes.get(currentCandidate);
 
-            @SuppressWarnings("unchecked")
-            var overlaps = (List<PathObject>) tree.query(envelope);
-            for (var nuc2 : overlaps) {
-                if (nuc2 == detection || skippedDetections.contains(nuc2) || detections.contains(nuc2))
+            var overlaps = (List<CandidateObject>) tree.query(envelope);
+            for (var overlappingCandidate : overlaps) {
+                if (overlappingCandidate == currentCandidate || skippedObjects.contains(overlappingCandidate) || retainedObjects.contains(overlappingCandidate))
                     continue;
 
+                // If we have an overlap, retain the higher-probability nucleus only (i.e. the one we met first)
+                // Try to refine other nuclei
+                try {
+                    var env = envelopes.get(overlappingCandidate);
+                    if (envelope.intersects(env) && currentCandidate.geometry.intersects(overlappingCandidate.geometry)) {
+                        // Retain the nucleus only if it is not fragmented, or less than half its original area
+                        var difference = overlappingCandidate.geometry.difference(currentCandidate.geometry);
+
+                        // Discard linestrings
+                        difference = GeometryTools.ensurePolygonal(difference);
+
+                        if (difference instanceof GeometryCollection) {
+                            // Keep only largest polygon?
+                            double maxArea = -1;
+                            int index = -1;
+
+                            for (int i = 0; i < difference.getNumGeometries(); i++) {
+                                double area = difference.getGeometryN(i).getArea();
+                                if (area > maxArea) {
+                                    maxArea = area;
+                                    index = i;
+                                }
+                            }
+                            difference = difference.getGeometryN(index);
+                        }
+
+//difference instanceof Polygon &&
+                        if (difference.getArea() > overlappingCandidate.area / 2.0)
+                            overlappingCandidate.geometry = difference;
+                        else {
+                            skippedObjects.add(overlappingCandidate);
+                        }
+                    }
+                } catch (Exception e) {
+                    skippedObjects.add(overlappingCandidate);
+                    skipErrorCount++;
+                }
+/*
                 // If we have an overlap, retain the larger object only
                 try {
                     var env = envelopes.get(nuc2);
@@ -503,14 +525,16 @@ public class Cellpose2D {
                     skipErrorCount++;
                 }
 
+*/
+
             }
         }
         if (skipErrorCount > 0) {
-            int skipCount = skippedDetections.size();
-            logger.warn("Skipped {} detection(s) due to error in resolving overlaps ({}% of all skipped)",
+            int skipCount = skippedObjects.size();
+            logger.warn("Skipped {} objects(s) due to error in resolving overlaps ({}% of all skipped)",
                     skipErrorCount, GeneralTools.formatNumber(skipErrorCount * 100.0 / skipCount, 1));
         }
-        return new ArrayList<>(detections);
+        return new ArrayList<CandidateObject>(retainedObjects);
     }
 
     /**
@@ -1112,6 +1136,16 @@ public class Cellpose2D {
 
         public List<TileFile> getTileFiles() {
             return tile;
+        }
+    }
+
+    private static class CandidateObject {
+        private Geometry geometry;
+        private final double area;
+
+        CandidateObject(Geometry geom) {
+            this.geometry = geom;
+            this.area = geom.getArea();
         }
     }
 }
