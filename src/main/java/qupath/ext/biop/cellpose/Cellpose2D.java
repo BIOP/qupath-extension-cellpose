@@ -32,6 +32,7 @@ import org.bytedeco.opencv.opencv_core.Mat;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryCollection;
+import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.index.strtree.STRtree;
 import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
@@ -467,18 +468,16 @@ public class Cellpose2D {
                 if (overlappingCandidate == currentCandidate || skippedObjects.contains(overlappingCandidate) || retainedObjects.contains(overlappingCandidate))
                     continue;
 
-                // If we have an overlap, retain the higher-probability nucleus only (i.e. the one we met first)
-                // Try to refine other nuclei
+                // If we have an overlap, try to keep the largest object
                 try {
                     var env = envelopes.get(overlappingCandidate);
                     if (envelope.intersects(env) && currentCandidate.geometry.intersects(overlappingCandidate.geometry)) {
                         // Retain the nucleus only if it is not fragmented, or less than half its original area
                         var difference = overlappingCandidate.geometry.difference(currentCandidate.geometry);
 
-                        // Discard linestrings
-                        difference = GeometryTools.ensurePolygonal(difference);
-
                         if (difference instanceof GeometryCollection) {
+                            difference = GeometryTools.ensurePolygonal(difference);
+
                             // Keep only largest polygon?
                             double maxArea = -1;
                             int index = -1;
@@ -492,9 +491,8 @@ public class Cellpose2D {
                             }
                             difference = difference.getGeometryN(index);
                         }
-
-//difference instanceof Polygon &&
-                        if (difference.getArea() > overlappingCandidate.area / 2.0)
+// difference instanceof Polygon &&
+                        if (  difference.getArea() > overlappingCandidate.area / 2.0)
                             overlappingCandidate.geometry = difference;
                         else {
                             skippedObjects.add(overlappingCandidate);
@@ -534,7 +532,7 @@ public class Cellpose2D {
             logger.warn("Skipped {} objects(s) due to error in resolving overlaps ({}% of all skipped)",
                     skipErrorCount, GeneralTools.formatNumber(skipErrorCount * 100.0 / skipCount, 1));
         }
-        return new ArrayList<CandidateObject>(retainedObjects);
+        return new ArrayList<>(retainedObjects);
     }
 
     /**
@@ -1151,6 +1149,22 @@ public class Cellpose2D {
         CandidateObject(Geometry geom) {
             this.geometry = geom;
             this.area = geom.getArea();
+
+            // Clean up the geometry already
+            geometry = GeometryTools.ensurePolygonal(geometry);
+
+            // Keep only largest polygon?
+            double maxArea = -1;
+            int index = -1;
+
+            for (int i = 0; i < geometry.getNumGeometries(); i++) {
+                double area = geometry.getGeometryN(i).getArea();
+                if (area > maxArea) {
+                    maxArea = area;
+                    index = i;
+                }
+            }
+            geometry = geometry.getGeometryN(index);
         }
     }
 }
