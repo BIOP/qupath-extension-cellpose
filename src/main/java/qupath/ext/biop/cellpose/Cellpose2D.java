@@ -558,7 +558,12 @@ public class Cellpose2D {
 
         //BufferedImage image = OpenCVTools.matToBufferedImage(mat);
 
-        File tempFile = new File(cellposeTempFolder, "Temp_" + request.getX() + "_" + request.getY() + ".tif");
+        File tempFile = new File(cellposeTempFolder,
+                "Temp_" +
+                        request.getX() + "_" +
+                        request.getY() +
+                        "_z" + request.getZ() +
+                        "_t" + request.getT() + ".tif");
         logger.info("Saving to {}", tempFile);
         IJ.save(imp, tempFile.getAbsolutePath());
 
