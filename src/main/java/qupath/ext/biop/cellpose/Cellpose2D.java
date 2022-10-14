@@ -848,7 +848,7 @@ public class Cellpose2D {
     /**
      * Get the results table associated with the Quality Control run
      *
-     * @return the results table with teh QC metrics
+     * @return the results table with the QC metrics
      */
     public ResultsTable getQCResults() {
         return this.qcResults;
@@ -1020,7 +1020,7 @@ public class Cellpose2D {
         Project<BufferedImage> project = QPEx.getQuPath().getProject();
         // Prepare location to save images
 
-        // SAve the images in parallel to go a bit faster
+        // Save the images in parallel to go a bit faster
 
         project.getImageList().forEach(e -> {
 
