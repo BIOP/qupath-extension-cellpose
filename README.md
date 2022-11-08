@@ -148,12 +148,13 @@ import qupath.ext.biop.cellpose.Cellpose2D
 def cellpose = Cellpose2D.builder("cyto") // Can choose "None" if you want to train from scratch
                 .channels("DAPI", "CY3")  // or use work with .cellposeChannels( channel1, channel2 ) and follow the cellpose way
 //                .preprocess(ImageOps.Filters.gaussianBlur(1)) // Optional preprocessing QuPath Ops 
-//                .epochs(500)              // Optional: will default to 500
-//                .learningRate(0.2)        // Optional: Will default to 0.2
-//                .batchSize(8)             // Optional: Will default to 8
+//                .epochs(500)             // Optional: will default to 500
+//                .learningRate(0.2)       // Optional: Will default to 0.2
+//                .batchSize(8)            // Optional: Will default to 8
+//                .minTrainMasks(5)        // Optional: Will default to 5
                 .useGPU()                 // Optional: Use the GPU if configured, defaults to CPU only
 //                .modelDirectory( new File("My/folder/for/models")) // Optional place to store resulting model. Will default to QuPath project root, and make a 'models' folder
-//                .saveBuilder("My Builder")
+//                .saveBuilder("My Builder") // Optional: Will save a builder json file that can be reloaded with Cellpose2D.builder(File builderFile)
                 .build()
 
 // Once ready for training you can call the train() method
