@@ -437,7 +437,7 @@ public class CellposeBuilder {
         return this;
     }
 
-    public CellposeBuilder setMinTrainMasks( Integer n) {
+    public CellposeBuilder minTrainMasks( Integer n) {
         this.minTrainMasks = n;
         return this;
     }
