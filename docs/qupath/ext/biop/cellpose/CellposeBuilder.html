@@ -353,12 +353,17 @@ extends java.lang.Object</pre>
 </tr>
 <tr id="i28" class="altColor">
 <td class="colFirst"><code><a href="CellposeBuilder.html" title="class in qupath.ext.biop.cellpose">CellposeBuilder</a></code></td>
+<th class="colSecond" scope="row"><code><span class="memberNameLink"><a href="#minTrainMasks(java.lang.Integer)">minTrainMasks</a></span>&#8203;(java.lang.Integer&nbsp;n)</code></th>
+<td class="colLast">&nbsp;</td>
+</tr>
+<tr id="i29" class="rowColor">
+<td class="colFirst"><code><a href="CellposeBuilder.html" title="class in qupath.ext.biop.cellpose">CellposeBuilder</a></code></td>
 <th class="colSecond" scope="row"><code><span class="memberNameLink"><a href="#modelDirectory(java.io.File)">modelDirectory</a></span>&#8203;(java.io.File&nbsp;modelDir)</code></th>
 <td class="colLast">
 <div class="block">Define the directory where the newly trained model should be saved</div>
 </td>
 </tr>
-<tr id="i29" class="rowColor">
+<tr id="i30" class="altColor">
 <td class="colFirst"><code><a href="CellposeBuilder.html" title="class in qupath.ext.biop.cellpose">CellposeBuilder</a></code></td>
 <th class="colSecond" scope="row"><code><span class="memberNameLink"><a href="#normalizePercentiles(double,double)">normalizePercentiles</a></span>&#8203;(double&nbsp;min,
                     double&nbsp;max)</code></th>
@@ -366,31 +371,26 @@ extends java.lang.Object</pre>
 <div class="block">Apply percentile normalization to the input image channels.</div>
 </td>
 </tr>
-<tr id="i30" class="altColor">
+<tr id="i31" class="rowColor">
 <td class="colFirst"><code><a href="CellposeBuilder.html" title="class in qupath.ext.biop.cellpose">CellposeBuilder</a></code></td>
 <th class="colSecond" scope="row"><code><span class="memberNameLink"><a href="#pixelSize(double)">pixelSize</a></span>&#8203;(double&nbsp;pixelSize)</code></th>
 <td class="colLast">
 <div class="block">Resolution at which the cell detection should be run.</div>
 </td>
 </tr>
-<tr id="i31" class="rowColor">
+<tr id="i32" class="altColor">
 <td class="colFirst"><code><a href="CellposeBuilder.html" title="class in qupath.ext.biop.cellpose">CellposeBuilder</a></code></td>
 <th class="colSecond" scope="row"><code><span class="memberNameLink"><a href="#preprocess(qupath.opencv.ops.ImageOp...)">preprocess</a></span>&#8203;(qupath.opencv.ops.ImageOp...&nbsp;ops)</code></th>
 <td class="colLast">
 <div class="block">Add preprocessing operations, if required.</div>
 </td>
 </tr>
-<tr id="i32" class="altColor">
+<tr id="i33" class="rowColor">
 <td class="colFirst"><code><a href="CellposeBuilder.html" title="class in qupath.ext.biop.cellpose">CellposeBuilder</a></code></td>
 <th class="colSecond" scope="row"><code><span class="memberNameLink"><a href="#saveBuilder(java.lang.String)">saveBuilder</a></span>&#8203;(java.lang.String&nbsp;name)</code></th>
 <td class="colLast">
 <div class="block">Save this builder as a JSON file in order to be able to reuse it in place</div>
 </td>
-</tr>
-<tr id="i33" class="rowColor">
-<td class="colFirst"><code><a href="CellposeBuilder.html" title="class in qupath.ext.biop.cellpose">CellposeBuilder</a></code></td>
-<th class="colSecond" scope="row"><code><span class="memberNameLink"><a href="#setMinTrainMasks(java.lang.Integer)">setMinTrainMasks</a></span>&#8203;(java.lang.Integer&nbsp;n)</code></th>
-<td class="colLast">&nbsp;</td>
 </tr>
 <tr id="i34" class="altColor">
 <td class="colFirst"><code><a href="CellposeBuilder.html" title="class in qupath.ext.biop.cellpose">CellposeBuilder</a></code></td>
@@ -865,13 +865,13 @@ extends java.lang.Object</pre>
 </dl>
 </li>
 </ul>
-<a id="setMinTrainMasks(java.lang.Integer)">
+<a id="minTrainMasks(java.lang.Integer)">
 <!--   -->
 </a>
 <ul class="blockList">
 <li class="blockList">
-<h4>setMinTrainMasks</h4>
-<pre class="methodSignature">public&nbsp;<a href="CellposeBuilder.html" title="class in qupath.ext.biop.cellpose">CellposeBuilder</a>&nbsp;setMinTrainMasks&#8203;(java.lang.Integer&nbsp;n)</pre>
+<h4>minTrainMasks</h4>
+<pre class="methodSignature">public&nbsp;<a href="CellposeBuilder.html" title="class in qupath.ext.biop.cellpose">CellposeBuilder</a>&nbsp;minTrainMasks&#8203;(java.lang.Integer&nbsp;n)</pre>
 </li>
 </ul>
 <a id="iou(double)">
