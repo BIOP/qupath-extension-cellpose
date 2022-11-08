@@ -60,6 +60,7 @@ public class CellposeBuilder {
     private Integer nEpochs = null;
     private Integer batchSize = null;
     private Double learningRate= Double.NaN;
+    private Integer minTrainMasks = null;
 
     // QuPath Object handling options
     private ColorTransforms.ColorTransform[] channels = new ColorTransforms.ColorTransform[0];
@@ -436,6 +437,11 @@ public class CellposeBuilder {
         return this;
     }
 
+    public CellposeBuilder setMinTrainMasks( Integer n) {
+        this.minTrainMasks = n;
+        return this;
+    }
+
     /**
      * Select the Intersection over Union (IoU) cutoff for excluding overlapping detections.
      * Default of 0.1 is good enough
@@ -689,6 +695,8 @@ public class CellposeBuilder {
         cellpose.nEpochs = nEpochs;
         cellpose.learningRate = learningRate;
         cellpose.batchSize = batchSize;
+
+        cellpose.minTrainMasks = minTrainMasks;
 
         // Overlap for segmentation of tiles. Should be large enough that any object must be "complete"
         // in at least one tile for resolving overlaps

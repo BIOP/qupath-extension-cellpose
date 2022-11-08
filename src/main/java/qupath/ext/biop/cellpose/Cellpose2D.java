@@ -135,9 +135,12 @@ public class Cellpose2D {
     protected Boolean doCluster = Boolean.FALSE;
     // Training parameters
     protected File modelDirectory = null;
+
     protected File trainDirectory = null;
     protected File valDirectory = null;
     protected Integer nEpochs = null;
+    protected Integer minTrainMasks = null;
+
     protected CellposeSetup cellposeSetup = CellposeSetup.getInstance();
     protected Boolean useGPU = Boolean.FALSE;
     private File cellposeTempFolder = null;
@@ -170,6 +173,22 @@ public class Cellpose2D {
      */
     public static CellposeBuilder builder(File builderPath) {
         return new CellposeBuilder(builderPath);
+    }
+
+    /**
+     * The directory that was used for saving the training images
+     * @return
+     */
+    public File getTrainingDirectory() {
+        return trainDirectory;
+    }
+
+    /**
+     * The directory that was used for saving the validation images
+     * @return
+     */
+    public File getValidationDirectory() {
+        return valDirectory;
     }
 
     // Convenience method to convert a PathObject to cells, taken verbatim from StarDist2D
@@ -296,8 +315,8 @@ public class Cellpose2D {
                     // thank you, Pete for the ContourTracing Class
                     Collection<CandidateObject> candidates = null;
                     try {
-                        candidates = readObjectsFromFile(maskFile, tilefile.getTile());
 
+                        candidates = readObjectsFromFile(maskFile, tilefile.getTile()).stream().filter(c-> parent.getROI().getGeometry().intersects(c.geometry)).collect(Collectors.toList());
 
                     } catch (IOException e) {
                         e.printStackTrace();
@@ -308,8 +327,10 @@ public class Cellpose2D {
                 }
             });
 
+            //Remove candidates that are not within the parent objecs
             // Filter Detections: Remove overlaps
             List<CandidateObject> filteredDetections = filterDetections(allCandidates);
+
 
             // Remove the detections that are not contained within the parent
             Geometry mask = parent.getROI().getGeometry();
@@ -576,7 +597,8 @@ public class Cellpose2D {
      * @throws InterruptedException Exception in case of command thread has some failing
      */
     private void runCellpose() throws IOException, InterruptedException {
-
+        CellposeSetup.CellposeVersion currentVersion = cellposeSetup.getVersion();
+        
         // Create command to run
         VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeSetup.getEnvironmentNameOrPath(), cellposeSetup.getEnvironmentType(), this.getClass().getSimpleName());
 
@@ -606,7 +628,7 @@ public class Cellpose2D {
         }
 
         if (!maskThreshold.isNaN()) {
-            if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE) || cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
+            if (currentVersion.equals(CellposeSetup.CellposeVersion.CELLPOSE) || currentVersion.equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
                 cellposeArguments.add("--cellprob_threshold");
             else
                 cellposeArguments.add("--mask_threshold");
@@ -624,14 +646,14 @@ public class Cellpose2D {
 
         cellposeArguments.add("--no_npy");
 
-        if (!(cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
-                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2)))
+        if (!(currentVersion.equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                currentVersion.equals(CellposeSetup.CellposeVersion.CELLPOSE_2) || currentVersion.equals(CellposeSetup.CellposeVersion.OMNIPOSE_034)))
             cellposeArguments.add("--resample");
 
         if (useGPU) cellposeArguments.add("--use_gpu");
 
-        if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
-                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
+        if (currentVersion.equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                currentVersion.equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
             cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
@@ -687,6 +709,7 @@ public class Cellpose2D {
      */
     private void runCellposeTraining() throws IOException, InterruptedException {
 
+        CellposeSetup.CellposeVersion currentVersion = cellposeSetup.getVersion();
         // Create command to run
         VirtualEnvironmentRunner veRunner = new VirtualEnvironmentRunner(cellposeSetup.getEnvironmentNameOrPath(), cellposeSetup.getEnvironmentType(), this.getClass().getSimpleName() + "-train");
 
@@ -732,13 +755,18 @@ public class Cellpose2D {
             cellposeArguments.add("" + batchSize);
         }
 
+        if (minTrainMasks != null ) {
+            cellposeArguments.add("--min_train_masks");
+            cellposeArguments.add( "" + minTrainMasks);
+        }
+
         if (invert) cellposeArguments.add("--invert");
         if (useOmnipose) cellposeArguments.add("--omni");
 
         if (useGPU) cellposeArguments.add("--use_gpu");
 
-        if (cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
-                cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
+        if (currentVersion.equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
+                currentVersion.equals(CellposeSetup.CellposeVersion.CELLPOSE_2))
             cellposeArguments.add("--verbose");
 
         veRunner.setArguments(cellposeArguments);
@@ -1013,12 +1041,9 @@ public class Cellpose2D {
     /**
      * Save training images for the project
      */
-    private void saveTrainingImages() {
+    public void saveTrainingImages() {
 
         Project<BufferedImage> project = QPEx.getQuPath().getProject();
-        // Prepare location to save images
-
-        // Save the images in parallel to go a bit faster
 
         project.getImageList().forEach(e -> {
 
@@ -1085,17 +1110,24 @@ public class Cellpose2D {
         SimpleImage image = ContourTracing.extractBand(bfImage.getRaster(), 0);
         float[] pixels = SimpleImages.getPixels(image, true);
 
+        float maxValue = 1;
+        for (float p : pixels) {
+            if (p > maxValue)
+                maxValue = p;
+        }
+        int maxLabel = (int)maxValue;
+
         Map<Number, CandidateObject> candidates = new TreeMap<>();
         float lastLabel = Float.NaN;
         for (float p : pixels) {
-            if (p >= 1 && p != lastLabel && !candidates.containsKey(p)) {
+            if (p >= 1 && p <= maxLabel && p != lastLabel && !candidates.containsKey(p)) {
                 Geometry geometry = ContourTracing.createTracedGeometry(image, p, p, region);
                 if (geometry != null && !geometry.isEmpty())
                     candidates.put(p, new CandidateObject(geometry));
                 lastLabel = p;
             }
         }
-        // Ignore the IDs, because they will be the same across different images and we don't really need them
+        // Ignore the IDs, because they will be the same across different images, and we don't really need them
         return candidates.values();
     }
 

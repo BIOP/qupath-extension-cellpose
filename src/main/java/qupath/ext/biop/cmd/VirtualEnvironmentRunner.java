@@ -160,11 +160,23 @@ public class VirtualEnvironmentRunner {
                 break;
         }
 
-        logger.info("Executing command: {}", shell.toString().replace(",", ""));
+
+        // Try to make a command that is fully readable and that can be copy pasted
+        List<String> printable = shell.stream().map(s -> {
+            // add quotes if there are spaces in the paths
+            if (s.contains(" "))
+                return "\"" + s + "\"";
+            else
+                return s;
+        }).collect(Collectors.toList());
+        String executionString = printable.toString().replace(",", "");
+
+        logger.info("Executing command:\n{}", executionString.substring(1, executionString.length()-1));
+        logger.info("This command should run directly if copy-pasted into your shell");
 
         // Now the cmd line is ready
         ProcessBuilder pb = new ProcessBuilder(shell).redirectErrorStream(true);
-        
+
         // Start the process and follow it throughout
         Process p = pb.start();
 
