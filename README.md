@@ -82,23 +82,17 @@ C:\Users\oburri\.conda\envs\cellpose-205\python.exe
 
 
 ## Step 2: Install the QuPath Cellpose extension
-Download the latest `qupath-extension-cellpose-[version].jar` file from [releases](https://github.com/biop/qupath-extension-cellpose/releases) and drag it onto the main QuPath window.
+Download the latest `qupath-extension-cellpose-[version].zip` file from [releases](https://github.com/biop/qupath-extension-cellpose/releases) and unzip it into your `extensions` directory. 
 
-If you haven't installed any extensions before, you'll be prompted to select a QuPath user directory.
+If your extensions directory is unset, drag and drop the unzipped jar file onto the main QuPath window. You'll be prompted to select a QuPath user directory.
 The extension will then be copied to a location inside that directory.
+
+To copy `run-cellpose-qc.py`, go to Extensions > Installed Extensions and click on "Open Extensions Directory". You can place the `run-cellpose-qc.py` in the same folder. 
 
 You might then need to restart QuPath (but not your computer).
 
-### Model QC Installation
-In the [releases](https://github.com/biop/qupath-extension-cellpose/releases), you will find a `run-cellpose-qc.py` script.
-
-This script must be copied into your `QuPath Extensions` Directory. 
-
-To find out where your `QuPath Extensions` directory is, Click on `Extensions > Installed extensions` and then click on 
-`Open extensions directory`. Copy paste `run-cellpose-qc.py` inside.
-
 > **Note**
-> In case you do not do this step, Cellpose training will still work, but the QC step will be skipped. 
+> In case you do not do this step, Cellpose training will still work, but the QC step will be skipped and you will be notified that the `run-cellpose-qc.py` cannot be found.
 
 
 ## QuPath Extension Cellpose: First time setup
