@@ -1,20 +1,34 @@
+/*-
+ * Copyright 2020-2022 QuPath developers, University of Edinburgh
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package qupath.ext.biop.cellpose;
 
 import com.google.gson.Gson;
 import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import qupath.lib.analysis.features.ObjectMeasurements;
-import qupath.lib.gui.scripting.QPEx;
+import qupath.lib.analysis.features.ObjectMeasurements.Compartments;
+import qupath.lib.analysis.features.ObjectMeasurements.Measurements;
 import qupath.lib.images.servers.ColorTransforms;
+import qupath.lib.images.servers.ColorTransforms.ColorTransform;
 import qupath.lib.images.servers.PixelCalibration;
-import qupath.lib.images.servers.PixelType;
 import qupath.lib.io.GsonTools;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
-import qupath.lib.objects.classes.PathClassFactory;
-import qupath.lib.projects.Projects;
 import qupath.lib.roi.interfaces.ROI;
 import qupath.lib.scripting.QP;
 import qupath.opencv.ops.ImageOp;
@@ -26,32 +40,35 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.function.Function;
 
+import static qupath.ext.biop.cellpose.OpCreators.TileOpCreator;
+
 /**
- * This class will contain all parameters that are usable by cellpose
+ * Cell detection based on the following method:
+ * <pre>
+ *   Uwe Schmidt, Martin Weigert, Coleman Broaddus, and Gene Myers.
+ *     "Cell Detection with Star-convex Polygons."
+ *   <i>International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI)</i>, Granada, Spain, September 2018.
+ * </pre>
+ * See the main repo at https://github.com/mpicbg-csbd/stardist
+ * <p>
+ * Very much inspired by stardist-imagej at https://github.com/mpicbg-csbd/stardist-imagej but re-written from scratch to use OpenCV and
+ * adapt the method of converting predictions to contours (very slightly) to be more QuPath-friendly.
+ * <p>
+ * Models are expected in the same format as required by the Fiji plugin, or converted to a frozen .pb file for use with OpenCV.
+ *
+ * @author Pete Bankhead (this implementation, but based on the others)
  */
 public class CellposeBuilder {
 
-    private final transient static Logger logger = LoggerFactory.getLogger(CellposeBuilder.class);
+    private static final Logger logger = LoggerFactory.getLogger(CellposeBuilder.class);
 
-    private String version;
     // Cellpose Related Options
-    private String model;
+    private String modelNameOrPath;
     private transient CellposeSetup cellposeSetup;
 
-    private Integer channel1 = 0; //GRAY
-    private Integer channel2 = 0; // NONE
-
-    private Boolean isInvert = Boolean.FALSE;
-
-    private Boolean useOmnipose = Boolean.FALSE;
-    private Boolean excludeEdges = Boolean.FALSE;
-    private Boolean doCluster = Boolean.FALSE;
-    private Boolean useGPU = Boolean.FALSE;
-
-
-    private Double maskThreshold = Double.NaN;
-    private Double flowThreshold = Double.NaN;
-    private Double diameter = Double.NaN;
+    private Double probaThreshold = 0.0;
+    private Double flowThreshold = 0.0;
+    private Double diameter = 0.0;
 
     // Cellpose Training options
     private File modelDirectory = null;
@@ -59,42 +76,47 @@ public class CellposeBuilder {
     private File valDirectory = null;
     private Integer nEpochs = null;
     private Integer batchSize = null;
-    private Double learningRate= Double.NaN;
+    private Double learningRate = Double.NaN;
     private Integer minTrainMasks = null;
 
     // QuPath Object handling options
-    private ColorTransforms.ColorTransform[] channels = new ColorTransforms.ColorTransform[0];
+    private ColorTransform[] channels = new ColorTransform[0];
     private Double cellExpansion = Double.NaN;
     private Double cellConstrainScale = Double.NaN;
     private Boolean ignoreCellOverlaps = Boolean.FALSE;
     private Double pixelSize = Double.NaN;
     private Integer tileWidth = 1024;
     private Integer tileHeight = 1024;
-    private PathClass globalPathClass = PathClassFactory.getPathClassUnclassified();
+    private PathClass globalPathClass = PathClass.getNullClass();
     private Boolean measureShape = Boolean.FALSE;
     private Boolean constrainToParent = Boolean.TRUE;
-    private Double iouThreshold = 0.1;
 
-    // Check if these need to be here
     private Function<ROI, PathObject> creatorFun;
-    private Collection<ObjectMeasurements.Compartments> compartments = Arrays.asList(ObjectMeasurements.Compartments.values());
-    private Collection<ObjectMeasurements.Measurements> measurements;
+    private Collection<Compartments> compartments = Arrays.asList(Compartments.values());
+    private Collection<Measurements> measurements;
     private List<ImageOp> ops = new ArrayList<>();
 
     private transient boolean saveBuilder;
     private transient String builderName;
-    private double simplifyDistance = 0.0;
-    private double normPercentileMin = -1.0;
-    private double normPercentileMax = -1.0;
+
     private Integer overlap = null;
+
+    private double simplifyDistance = 1.4;
+
+    private Map<Integer, PathClass> classifications;
+
+    private TileOpCreator globalPreprocessing;
+    private List<ImageOp> preprocessing = new ArrayList<>();
+
+    private LinkedHashMap<String, String> cellposeParameters = new LinkedHashMap<>();
+
 
     /**
      * can create a cellpose builder from a serialized JSON version of this builder.
      *
      * @param builderFile the path to a serialized JSON builder made with {@link #saveBuilder(String)}
      */
-
-    CellposeBuilder(File builderFile) {
+    protected CellposeBuilder(File builderFile) {
 
         // Need to know setup options, which are transient
         this.cellposeSetup = CellposeSetup.getInstance();
@@ -104,18 +126,18 @@ public class CellposeBuilder {
             gson.fromJson(new FileReader(builderFile), CellposeBuilder.class);
             logger.info("Builder parameters loaded from {}", builderFile);
         } catch (FileNotFoundException e) {
-            logger.error("Could not load builder from "+builderFile.getAbsolutePath(), e);
+            logger.error("Could not load builder from " + builderFile.getAbsolutePath(), e);
         }
     }
 
-    CellposeBuilder(String modelPath) {
+    /**
+     * Build a cellpose model by providing a string which can be the name of a pretrained model or a path to a custom model
+     * @param modelPath the model name or path
+     */
+    protected CellposeBuilder(String modelPath) {
 
-        this.version = new CellposeExtension().getVersion().toString();
-
-        // Initialize all CellposeBuilder
-        this.model = modelPath;
-
-        this.ops.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
+        // Initialize all CellposeBuilderOld
+        this.modelNameOrPath = modelPath;
 
         // Need to know setup options in order to guide the user in case of version inconsistency
         this.cellposeSetup = CellposeSetup.getInstance();
@@ -139,30 +161,49 @@ public class CellposeBuilder {
     }
 
     /**
-     * Apply percentile normalization to the input image channels.
-     * <p>
-     * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
-     * in which case the order in which the operations are applied depends upon the order
-     * in which the methods of the builder are called.
-     * <p>
-     * Warning! This is applied on a per-tile basis. This can result in artifacts and false detections
-     * without background/constant regions.
-     * Consider using {@link #inputAdd(double...)} and {@link #inputScale(double...)} as alternative
-     * normalization strategies, if appropriate constants can be determined to apply globally.
+     * Add preprocessing operations, if required.
      *
-     * @param min minimum percentile
-     * @param max maximum percentile
+     * @param ops
      * @return this builder
      */
-    public CellposeBuilder normalizePercentiles(double min, double max) {
-        this.normPercentileMin = min;
-        this.normPercentileMax = max;
-
-        this.ops.add(ImageOps.Normalize.percentile(min, max));
-        this.ops.add(ImageOps.Core.clip(0.0,1.0));
+    public CellposeBuilder preprocess(ImageOp... ops) {
+        for (var op : ops)
+            this.preprocessing.add(op);
         return this;
     }
 
+    /**
+     * Add an {@link TileOpCreator} to generate preprocessing operations based upon the
+     * entire image, rather than per tile.
+     * <p>
+     * Note that only a single such operation is permitted, which is applied after
+     * channel extraction but <i>before</i> any other preprocessing.
+     * <p>
+     * The intended use is with {@link OpCreators#imageNormalizationBuilder()} to perform
+     * normalization based upon percentiles computed across the image, rather than per tile.
+     *
+     * @param global preprocessing operation
+     * @return this builder
+     */
+    public CellposeBuilder preprocess(TileOpCreator global) {
+        this.globalPreprocessing = global;
+        return this;
+    }
+
+    /**
+     * Customize the extent to which contours are simplified.
+     * Simplification reduces the number of vertices, which in turn can reduce memory requirements and
+     * improve performance.
+     * <p>
+     * Implementation note: this currently uses the Visvalingam-Whyatt algorithm.
+     *
+     * @param distance simplify distance threshold; set &le; 0 to turn off additional simplification
+     * @return this builder
+     */
+    public CellposeBuilder simplify(double distance) {
+        this.simplifyDistance = distance;
+        return this;
+    }
 
     /**
      * Specify channels. Useful for detecting nuclei for one channel
@@ -174,8 +215,8 @@ public class CellposeBuilder {
      */
     public CellposeBuilder channels(int... channels) {
         return channels(Arrays.stream(channels)
-                .mapToObj(ColorTransforms::createChannelExtractor)
-                .toArray(ColorTransforms.ColorTransform[]::new));
+                .mapToObj(c -> ColorTransforms.createChannelExtractor(c))
+                .toArray(ColorTransform[]::new));
     }
 
     /**
@@ -188,8 +229,8 @@ public class CellposeBuilder {
      */
     public CellposeBuilder channels(String... channels) {
         return channels(Arrays.stream(channels)
-                .map(ColorTransforms::createChannelExtractor)
-                .toArray(ColorTransforms.ColorTransform[]::new));
+                .map(c -> ColorTransforms.createChannelExtractor(c))
+                .toArray(ColorTransform[]::new));
     }
 
     /**
@@ -197,261 +238,11 @@ public class CellposeBuilder {
      * <p>
      * This makes it possible to supply color deconvolved channels, for example.
      *
-     * @param channels ColorTransform channels to use, typically only used internally
+     * @param channels
      * @return this builder
      */
-    public CellposeBuilder channels(ColorTransforms.ColorTransform... channels) {
+    public CellposeBuilder channels(ColorTransform... channels) {
         this.channels = channels.clone();
-        if (this.channels.length >= 2) {
-            this.channel1 = 1;
-            this.channel2 = 2;
-        }
-        return this;
-    }
-
-    /**
-     * Add preprocessing operations, if required.
-     *
-     * @param ops series of ImageOps to apply to this server before saving the images
-     * @return this builder
-     */
-    public CellposeBuilder preprocess(ImageOp... ops) {
-        Collections.addAll(this.ops, ops);
-        return this;
-    }
-
-    /**
-     * Add an offset as a preprocessing step.
-     * Usually the value will be negative. Along with {@link #inputScale(double...)} this can be used as an alternative (global) normalization.
-     * <p>
-     * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
-     * in which case the order in which the operations are applied depends upon the order
-     * in which the methods of the builder are called.
-     *
-     * @param values either a single value to add to all channels, or an array of values equal to the number of channels
-     * @return this builder
-     */
-    public CellposeBuilder inputAdd(double... values) {
-        this.ops.add(ImageOps.Core.add(values));
-        return this;
-    }
-
-    /**
-     * Multiply by a scale factor as a preprocessing step.
-     * Along with {@link #inputAdd(double...)} this can be used as an alternative (global) normalization.
-     * <p>
-     * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
-     * in which case the order in which the operations are applied depends upon the order
-     * in which the methods of the builder are called.
-     *
-     * @param values either a single value to add to all channels, or an array of values equal to the number of channels
-     * @return this builder
-     */
-    public CellposeBuilder inputScale(double... values) {
-        this.ops.add(ImageOps.Core.subtract(values));
-        return this;
-    }
-
-    /**
-     * Size in pixels of a tile used for detection.
-     * Note that tiles are independently normalized, and therefore tiling can impact
-     * the results. Default is 1024.
-     *
-     * @param tileSize if the regions must be broken down, how large should the tiles be, in pixels (width and height)
-     * @return this builder
-     */
-    public CellposeBuilder tileSize(int tileSize) {
-        return tileSize(tileSize, tileSize);
-    }
-
-    /**
-     * Size in pixels of a tile used for detection.
-     * Note that tiles are independently normalized, and therefore tiling can impact
-     * the results. Default is 1024.
-     *
-     * @param tileWidth if the regions must be broken down, how large should the tiles be (width), in pixels
-     * @param tileHeight if the regions must be broken down, how large should the tiles be (height), in pixels
-     * @return this builder
-     */
-    public CellposeBuilder tileSize(int tileWidth, int tileHeight) {
-        this.tileWidth = tileWidth;
-        this.tileHeight = tileHeight;
-        return this;
-    }
-
-        /**
-         * Sets the channels to use by cellpose, in case there is an issue with the order or the number of exported channels
-         * @param channel1 the main channel
-         * @param channel2 the second channel (typically nuclei)
-         * @return this builder
-         */
-    public CellposeBuilder cellposeChannels(int channel1, int channel2) {
-        this.channel1 = channel1;
-        this.channel2 = channel2;
-        return this;
-    }
-
-    /**
-     * Probability threshold to apply for detection, between 0 and 1.
-     *
-     * @param threshold probability threshold between 0 and 1 (default 0.5)
-     * @return this builder
-     */
-    public CellposeBuilder maskThreshold(double threshold) {
-        this.maskThreshold = threshold;
-        return this;
-    }
-
-    /**
-     * Flow threshold to apply for detection, between 0 and 1.
-     *
-     * @param threshold flow threshold (default 0.0)
-     * @return this builder
-     */
-    public CellposeBuilder flowThreshold(double threshold) {
-        this.flowThreshold = threshold;
-        return this;
-    }
-
-    /**
-     * The extimated diameter of the objects to detect. Cellpose will further downsample the images in order to match
-     * their expected diameter
-     *
-     * @param diameter in pixels
-     * @return this builder
-     */
-    public CellposeBuilder diameter(double diameter) {
-        this.diameter = diameter;
-        return this;
-    }
-
-    /**
-     * Inverts the image channels within cellpose. Adds the --invert flag to the command
-     * @return this builder
-     */
-    public CellposeBuilder invert() {
-        this.isInvert = true;
-        return this;
-    }
-
-    public CellposeBuilder simplify(double distance) {
-        this.simplifyDistance = distance;
-        return this;
-    }
-
-    /**
-     * Use Omnipose implementation: Adds --omni flag to command
-     *
-     * @return this builder
-     */
-    public CellposeBuilder useOmnipose() {
-        if( this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE) ||
-                this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_1) ||
-                this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.CELLPOSE_2)) {
-            this.useOmnipose = true;
-        } else {
-            logger.warn("--omni flag not available in {}", CellposeSetup.CellposeVersion.CELLPOSE);
-        }
-        return this;
-    }
-
-    /**
-     * Exclude on edges. Adds --exclude_on_edges flag to command
-     *
-     * @return this builder
-     */
-    public CellposeBuilder excludeEdges() {
-        if( this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE) ) {
-            this.excludeEdges = true;
-        } else {
-            logger.warn("--exclude_edges flag not available in {}", CellposeSetup.CellposeVersion.CELLPOSE);
-        }
-        return this;
-    }
-
-    /**
-     * DBSCAN clustering. Reduces oversegmentation of thin features, adds --cluster flag to command.
-     *
-     * @return this builder
-     */
-    public CellposeBuilder clusterDBSCAN() {
-        if( this.cellposeSetup.getVersion().equals(CellposeSetup.CellposeVersion.OMNIPOSE) ) {
-            this.doCluster = true;
-        } else {
-            logger.warn("--cluster flag not available in {}", CellposeSetup.CellposeVersion.CELLPOSE);
-        }
-        return this;
-    }
-
-    /**
-     * Use a GPU for prediction or training. Whether this works or nt will depend on your cellpose environment
-     *
-     * @return this Builder
-     */
-    public CellposeBuilder useGPU() {
-        this.useGPU = Boolean.TRUE;
-        return this;
-    }
-
-    /**
-     * Define the directory where the newly trained model should be saved
-     *
-     * @param modelDir a directory (does not need to exist yet) where to save the cellpose model
-     * @return this Builder
-     */
-    public CellposeBuilder modelDirectory(File modelDir) {
-        this.modelDirectory = modelDir;
-        return this;
-    }
-
-    /**
-     * Defines the number of epochs for training
-     *
-     * @param nEpochs number of epochs for training
-     * @return this Builder
-     */
-    public CellposeBuilder epochs(int nEpochs) {
-        this.nEpochs = nEpochs;
-        return this;
-    }
-
-    /**
-     * Defines the learning rate
-     *
-     * @param learningRate learning rate per epoch
-     * @return this Builder
-     */
-    public CellposeBuilder learningRate(double learningRate) {
-        this.learningRate = learningRate;
-        return this;
-    }
-
-    /**
-     * Defines the batch size for training
-     *
-     * @param batchSize batch size for training
-     * @return this Builder
-     */
-    public CellposeBuilder batchSize(int batchSize) {
-        this.batchSize = batchSize;
-        return this;
-    }
-
-    public CellposeBuilder minTrainMasks( Integer n) {
-        this.minTrainMasks = n;
-        return this;
-    }
-
-    /**
-     * Select the Intersection over Union (IoU) cutoff for excluding overlapping detections.
-     * Default of 0.1 is good enough
-     * <p>
-     *
-     * @param iouThreshold distance threshold
-     * @return this builder
-     */
-    public CellposeBuilder iou(double iouThreshold) {
-        this.iouThreshold = iouThreshold;
         return this;
     }
 
@@ -464,7 +255,7 @@ public class CellposeBuilder {
      * <p>
      * In short, be wary.
      *
-     * @param distance cell expansion distance in microns
+     * @param distance
      * @return this builder
      */
     public CellposeBuilder cellExpansion(double distance) {
@@ -477,55 +268,11 @@ public class CellposeBuilder {
      * the nucleus size. Only meaningful for values &gt; 1; the nucleus is expanded according
      * to the scale factor, and used to define the maximum permitted cell expansion.
      *
-     * @param scale a number to multiply each pixel in the image by
+     * @param scale
      * @return this builder
      */
     public CellposeBuilder cellConstrainScale(double scale) {
         this.cellConstrainScale = scale;
-        return this;
-    }
-
-    /**
-     * Request that a classification is applied to all created objects.
-     *
-     * @param pathClass the PathClass of all detections resulting from this run
-     * @return this builder
-     */
-    public CellposeBuilder classify(PathClass pathClass) {
-        this.globalPathClass = pathClass;
-        return this;
-    }
-
-    /**
-     * Request that a classification is applied to all created objects.
-     * This is a convenience method that get a {@link PathClass} from  {@link PathClassFactory}.
-     *
-     * @param pathClassName the name of the PathClass for all detections
-     * @return this builder
-     */
-    public CellposeBuilder classify(String pathClassName) {
-        return classify(PathClassFactory.getPathClass(pathClassName, (Integer) null));
-    }
-
-    /**
-     * If true, ignore overlaps when computing cell expansion.
-     *
-     * @param ignore ignore overlaps when computing cell expansion.
-     * @return this builder
-     */
-    public CellposeBuilder ignoreCellOverlaps(boolean ignore) {
-        this.ignoreCellOverlaps = ignore;
-        return this;
-    }
-
-    /**
-     * If true, constrain nuclei and cells to any parent annotation (default is true).
-     *
-     * @param constrainToParent constrain nuclei and cells to any parent annotation
-     * @return this builder
-     */
-    public CellposeBuilder constrainToParent(boolean constrainToParent) {
-        this.constrainToParent = constrainToParent;
         return this;
     }
 
@@ -536,7 +283,51 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder createAnnotations() {
-        this.creatorFun = PathObjects::createAnnotationObject;
+        this.creatorFun = r -> PathObjects.createAnnotationObject(r);
+        return this;
+    }
+
+    /**
+     * Request that a classification is applied to all created objects.
+     *
+     * @param pathClass
+     * @return this builder
+     */
+    public CellposeBuilder classify(PathClass pathClass) {
+        this.globalPathClass = pathClass;
+        return this;
+    }
+
+    /**
+     * Request that a classification is applied to all created objects.
+     * This is a convenience method that get a {@link PathClass} from a String representation.
+     *
+     * @param pathClassName
+     * @return this builder
+     */
+    public CellposeBuilder classify(String pathClassName) {
+        return classify(PathClass.fromString(pathClassName, (Integer) null));
+    }
+
+    /**
+     * If true, ignore overlaps when computing cell expansion.
+     *
+     * @param ignore
+     * @return this builder
+     */
+    public CellposeBuilder ignoreCellOverlaps(boolean ignore) {
+        this.ignoreCellOverlaps = ignore;
+        return this;
+    }
+
+    /**
+     * If true, constrain nuclei and cells to any parent annotation (default is true).
+     *
+     * @param constrainToParent
+     * @return this builder
+     */
+    public CellposeBuilder constrainToParent(boolean constrainToParent) {
+        this.constrainToParent = constrainToParent;
         return this;
     }
 
@@ -547,11 +338,11 @@ public class CellposeBuilder {
      */
     public CellposeBuilder measureIntensity() {
         this.measurements = Arrays.asList(
-                ObjectMeasurements.Measurements.MEAN,
-                ObjectMeasurements.Measurements.MEDIAN,
-                ObjectMeasurements.Measurements.MIN,
-                ObjectMeasurements.Measurements.MAX,
-                ObjectMeasurements.Measurements.STD_DEV);
+                Measurements.MEAN,
+                Measurements.MEDIAN,
+                Measurements.MIN,
+                Measurements.MAX,
+                Measurements.STD_DEV);
         return this;
     }
 
@@ -561,7 +352,7 @@ public class CellposeBuilder {
      * @param measurements the measurements to make
      * @return this builder
      */
-    public CellposeBuilder measureIntensity(Collection<ObjectMeasurements.Measurements> measurements) {
+    public CellposeBuilder measureIntensity(Collection<Measurements> measurements) {
         this.measurements = new ArrayList<>(measurements);
         return this;
     }
@@ -583,13 +374,302 @@ public class CellposeBuilder {
      * @param compartments cell compartments for intensity measurements
      * @return this builder
      */
-    public CellposeBuilder compartments(ObjectMeasurements.Compartments... compartments) {
+    public CellposeBuilder compartments(Compartments... compartments) {
         this.compartments = Arrays.asList(compartments);
         return this;
     }
 
     /**
+     * Size in pixels of a tile used for detection.
+     * Note that tiles are independently normalized, and therefore tiling can impact
+     * the results. Default is 1024.
+     *
+     * @param tileSize
+     * @return this builder
+     */
+    public CellposeBuilder tileSize(int tileSize) {
+        return tileSize(tileSize, tileSize);
+    }
+
+    /**
+     * Size in pixels of a tile used for detection.
+     * Note that tiles are independently normalized, and therefore tiling can impact
+     * the results. Default is 1024.
+     *
+     * @param tileWidth
+     * @param tileHeight
+     * @return this builder
+     */
+    public CellposeBuilder tileSize(int tileWidth, int tileHeight) {
+        this.tileWidth = tileWidth;
+        this.tileHeight = tileHeight;
+        return this;
+    }
+
+    /**
+     * Apply percentile normalization separately to the input image channels.
+     * <p>
+     * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
+     * in which case the order in which the operations are applied depends upon the order
+     * in which the methods of the builder are called.
+     * <p>
+     * Warning! This is applied on a per-tile basis. This can result in artifacts and false detections
+     * without background/constant regions.
+     * Consider using {@link #inputAdd(double...)} and {@link #inputScale(double...)} as alternative
+     * normalization strategies, if appropriate constants can be determined to apply globally.
+     *
+     * @param min minimum percentile
+     * @param max maximum percentile
+     * @return this builder
+     * @see #normalizePercentiles(double, double, boolean, double)
+     */
+    public CellposeBuilder normalizePercentiles(double min, double max) {
+        return normalizePercentiles(min, max, true, 0.0);
+    }
+
+    /**
+     * Apply percentile normalization to the input image channels, or across all channels jointly.
+     * <p>
+     * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
+     * in which case the order in which the operations are applied depends upon the order
+     * in which the methods of the builder are called.
+     * <p>
+     * Warning! This is applied on a per-tile basis. This can result in artifacts and false detections
+     * without background/constant regions.
+     * Consider using {@link #inputAdd(double...)} and {@link #inputScale(double...)} as alternative
+     * normalization strategies, if appropriate constants can be determined to apply globally.
+     *
+     * @param min        minimum percentile
+     * @param max        maximum percentile
+     * @param perChannel if true, normalize each channel separately; if false, normalize channels jointly
+     * @param eps        small constant to apply
+     * @return this builder
+     * @since v0.4.0
+     */
+    public CellposeBuilder normalizePercentiles(double min, double max, boolean perChannel, double eps) {
+        this.preprocessing.add(ImageOps.Normalize.percentile(min, max, perChannel, eps));
+        return this;
+    }
+
+
+    /**
+     * Add an offset as a preprocessing step.
+     * Usually the value will be negative. Along with {@link #inputScale(double...)} this can be used as an alternative (global) normalization.
+     * <p>
+     * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
+     * in which case the order in which the operations are applied depends upon the order
+     * in which the methods of the builder are called.
+     *
+     * @param values either a single value to add to all channels, or an array of values equal to the number of channels
+     * @return this builder
+     * @see #inputSubtract(double...)
+     * @see #inputScale(double...)
+     */
+    public CellposeBuilder inputAdd(double... values) {
+        this.preprocessing.add(ImageOps.Core.add(values));
+        return this;
+    }
+
+    /**
+     * Subtract an offset as a preprocessing step.
+     * <p>
+     * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
+     * in which case the order in which the operations are applied depends upon the order
+     * in which the methods of the builder are called.
+     *
+     * @param values either a single value to subtract from all channels, or an array of values equal to the number of channels
+     * @return this builder
+     * @see #inputAdd(double...)
+     * @see #inputScale(double...)
+     * @since v0.4.0
+     */
+    public CellposeBuilder inputSubtract(double... values) {
+        this.preprocessing.add(ImageOps.Core.subtract(values));
+        return this;
+    }
+
+    /**
+     * Multiply by a scale factor as a preprocessing step.
+     * Along with {@link #inputAdd(double...)} this can be used as an alternative (global) normalization.
+     * <p>
+     * Note that this can be used in combination with {@link #preprocess(ImageOp...)},
+     * in which case the order in which the operations are applied depends upon the order
+     * in which the methods of the builder are called.
+     *
+     * @param values either a single value to add to all channels, or an array of values equal to the number of channels
+     * @return this builder
+     * @see #inputAdd(double...)
+     * @see #inputSubtract(double...)
+     */
+    public CellposeBuilder inputScale(double... values) {
+        this.preprocessing.add(ImageOps.Core.multiply(values));
+        return this;
+    }
+
+    //  CELLPOSE OPTIONS
+    // ------------------
+
+    /**
+     * Generic means of adding a cellpose parameter
+     *
+     * @param flagName  the name of the flag, eg. "save_every"
+     * @param flagValue the value that is linked to the flag, eg. "20". Can be an empty string or null if it is not needed
+     * @return this builder
+     * @see <a href="https://cellpose.readthedocs.io/en/latest/command.html#input-settings">the cellpose documentation</a> for a list of available flags
+     */
+    public CellposeBuilder addParameter(String flagName, String flagValue) {
+        this.cellposeParameters.put(flagName, flagValue);
+        return this;
+
+    }
+
+    /**
+     * Generic means of adding a cellpose parameter
+     *
+     * @param flagName the name of the flag, eg. "save_every"	 * @param flagName the name of the flag, eg. "save_every"
+     * @return
+     * @see <a href="https://cellpose.readthedocs.io/en/latest/command.html#input-settings">the cellpose documentation</a> for a list of available flags
+     */
+    public CellposeBuilder addParameter(String flagName) {
+        addParameter(flagName, null);
+        return this;
+    }
+
+    /**
+     * Use Omnipose implementation: Adds --omni flag to command
+     *
+     * @return this builder
+     */
+    public CellposeBuilder useOmnipose() {
+        addParameter("omni");
+        return this;
+    }
+
+    /**
+     * Exclude on edges. Adds --exclude_on_edges flag to cellpose command
+     *
+     * @return this builder
+     */
+    public CellposeBuilder excludeEdges() {
+        addParameter("exclude_on_edges");
+        return this;
+    }
+
+    public CellposeBuilder cellposeChannels(Integer channel1, Integer channel2) {
+        addParameter("chan", channel1.toString());
+        addParameter("chan2", channel2.toString());
+        return this;
+    }
+
+
+    /**
+     * cellprob threshold, default is 0, decrease to find more and larger masks
+     *
+     * @param threshold cell/nuclei masks threshold, between -6 and +6
+     * @return this builder
+     * @deprecated use {@link CellposeBuilder#cellprobThreshold(Double)}
+     */
+    public CellposeBuilder maskThreshold(Double threshold) {
+        logger.warn("'maskThreshold() is deprecated. Replace with cellprobThreshold() in the builder.");
+        addParameter("cellprob_threshold", threshold.toString());
+        return this;
+    }
+
+    /**
+     * /**
+     * cellprob threshold, default is 0, decrease to find more and larger masks
+     *
+     * @param threshold cell/nuclei masks threshold, between -6 and +6
+     * @return this builder
+     */
+    public CellposeBuilder cellprobThreshold(Double threshold) {
+        addParameter("cellprob_threshold", threshold.toString());
+        return this;
+    }
+
+    /**
+     * Flow error threshold, 0 turns off this optional QC step. Default: 0.
+     *
+     * @param threshold flow threshold (default 0.0)
+     * @return this builder
+     */
+    public CellposeBuilder flowThreshold(Double threshold) {
+        addParameter("flow_threshold", threshold.toString());
+        return this;
+    }
+
+    /**
+     * The estimated diameter of the objects to detect. Cellpose will further downsample (or upsample) the images in order to match
+     * the diamteter corresponding to the model being used
+     *
+     * @param diameter in pixels
+     * @return this builder
+     */
+    public CellposeBuilder diameter(Double diameter) {
+        addParameter("diameter", diameter.toString());
+        return this;
+    }
+
+    // CELLPOSE TRAINING OPTIONS
+
+    /**
+     * Define the directory where the newly trained model should be saved
+     *
+     * @param modelDir a directory (does not need to exist yet) where to save the cellpose model
+     * @return this Builder
+     */
+    public CellposeBuilder modelDirectory(File modelDir) {
+        this.modelDirectory = modelDir;
+        return this;
+    }
+
+    /**
+     * Defines the number of epochs for training
+     *
+     * @param nEpochs number of epochs for training
+     * @return this Builder
+     */
+    public CellposeBuilder epochs(Integer nEpochs) {
+        addParameter("n_epochs", nEpochs.toString());
+        return this;
+    }
+
+    /**
+     * Defines the learning rate
+     *
+     * @param learningRate learning rate per epoch
+     * @return this Builder
+     */
+    public CellposeBuilder learningRate(Double learningRate) {
+        addParameter("learning_rate", learningRate.toString());
+        return this;
+    }
+
+    /**
+     * Defines the batch size for training
+     *
+     * @param batchSize batch size for training
+     * @return this Builder
+     */
+    public CellposeBuilder batchSize(Integer batchSize) {
+        addParameter("batch_size", batchSize.toString());
+        return this;
+    }
+
+    /**
+     * Excludes training data with less than n training masks (n labels)
+     *
+     * @param n minimum number of labels per training image
+     * @return this builder
+     */
+    public CellposeBuilder minTrainMasks(Integer n) {
+        addParameter("min_train_masks", n.toString());
+        return this;
+    }
+
+    /**
      * Save this builder as a JSON file in order to be able to reuse it in place
+     *
      * @param name // A name to append to the JSON file. Keep it meaningful for your needs
      * @return this builder
      */
@@ -602,82 +682,75 @@ public class CellposeBuilder {
     /**
      * Set the overlap (in pixels) between tiles. This overlap should be larger than 2x the largest object you are
      * trying to segment
+     *
      * @param overlap the overlap, in pixels
      * @return this builder
      */
-    public CellposeBuilder setOverlap( int overlap) {
+    public CellposeBuilder setOverlap(int overlap) {
         this.overlap = overlap;
         return this;
     }
 
     /**
+     * Convenience method to call global normalization for the dataset
+     * @param percentileMin the min percentile 0-100
+     * @param percentileMax the max percentile 0-100
+     * @param normDownsample a large downsample for the computation to be efficient over the whole image
+     * @return this builder
+     */
+    public CellposeBuilder normalizePercentilesGlobal(double percentileMin, double percentileMax, double normDownsample) {
+
+        TileOpCreator normOp = new OpCreators.ImageNormalizationBuilder().percentiles(percentileMin, percentileMax)
+                .perChannel(true)
+                .downsample(normDownsample)
+                .useMask(true)
+                .build();
+
+        // Deactivate cellpose normalization
+        this.noCellposeNormalization();
+
+        // Add this operation the the preprocessing
+        return this.preprocess(normOp);
+    }
+
+    /**
+     * convenience method? to deactivate cellpose normalization.
+     * @return
+     */
+    public CellposeBuilder noCellposeNormalization() {
+        return this.addParameter("no_norm");
+    }
+
+    /**
      * Create a {@link Cellpose2D}, all ready for detection.
      *
-     * @return a Cellpose2D object, ready to be run
+     * @return
      */
     public Cellpose2D build() {
-
-        // The cellpose class that will run the detections and training
         Cellpose2D cellpose = new Cellpose2D();
 
-        ArrayList<ImageOp> mergedOps = new ArrayList<>(ops);
-
         // Check the model. If it is a file, then it is a custom model
-        File file = new File(model);
-        if (file.isFile()) {
-            logger.info("Provided model {} is a file. Assuming custom model", file);
+        File file = new File(this.modelNameOrPath);
+        if (file.exists()) {
+            logger.info("Provided model '{}' is a file. Assuming custom model", file);
         }
 
-        // Pass all cellpose options in one go...
-        cellpose.model = model;
+        // Assign model
+        cellpose.model = this.modelNameOrPath;
 
-        cellpose.cellposeSetup = cellposeSetup;
+        // Assign current cellpose extension settings
+        cellpose.cellposeSetup = this.cellposeSetup;
 
-        // Add all operations (preprocessing, channel extraction and normalization)
-        mergedOps.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
-
-        // Ensure there are only 2 channels at most
-        if (channels.length > 2) {
-            logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two", channels.length);
-            channels = Arrays.copyOf(channels, 2);
-        }
-        cellpose.op = ImageOps.buildImageDataOp(channels).appendOps(mergedOps.toArray(ImageOp[]::new));
-
-        // CellPose accepts either one or two channels. This will help the final command
-        cellpose.channel1 = channel1;
-        cellpose.channel2 = channel2;
-
-        if (maskThreshold.isNaN()) cellpose.maskThreshold = 0.0;
-        else cellpose.maskThreshold = maskThreshold;
-
-        if (flowThreshold.isNaN()) cellpose.flowThreshold = 0.4;
-        else cellpose.flowThreshold = flowThreshold;
-
-        cellpose.pixelSize = pixelSize;
-
-        if (diameter.isNaN()) cellpose.diameter = 0.0;
-        else cellpose.diameter = diameter;
-
-        cellpose.simplifyDistance = simplifyDistance;
-
-        cellpose.invert = isInvert;
-
-        cellpose.doCluster = doCluster;
-        cellpose.excludeEdges = excludeEdges;
-        cellpose.useOmnipose = useOmnipose;
-        cellpose.useGPU = useGPU;
-
-        // Pick up info on project location
+        // Pick up info on project location and where the data will be stored for training and inference
         File quPathProjectDir = QP.getProject().getPath().getParent().toFile();
-        if (modelDirectory == null) {
-            modelDirectory = new File(quPathProjectDir, "models");
+        if (this.modelDirectory == null) {
+            this.modelDirectory = new File(quPathProjectDir, "models");
         }
 
         modelDirectory.mkdirs();
 
         // Define training and validation directories inside the QuPath Project
         File groundTruthDirectory = new File(quPathProjectDir, "cellpose-training");
-
         File trainDirectory = new File(groundTruthDirectory, "train");
         File valDirectory = new File(groundTruthDirectory, "test");
         trainDirectory.mkdirs();
@@ -685,6 +758,7 @@ public class CellposeBuilder {
 
         // Cleanup a previous run
         try {
+            FileUtils.cleanDirectory(trainDirectory);
             FileUtils.cleanDirectory(valDirectory);
         } catch (IOException e) {
             logger.error(e.getMessage(), e);
@@ -692,46 +766,59 @@ public class CellposeBuilder {
         cellpose.modelDirectory = modelDirectory;
         cellpose.trainDirectory = trainDirectory;
         cellpose.valDirectory = valDirectory;
-        cellpose.nEpochs = nEpochs;
-        cellpose.learningRate = learningRate;
-        cellpose.batchSize = batchSize;
 
-        cellpose.minTrainMasks = minTrainMasks;
 
-        // Overlap for segmentation of tiles. Should be large enough that any object must be "complete"
-        // in at least one tile for resolving overlaps
-        if (this.overlap != null) {
-            cellpose.overlap = this.overlap;
-
-        } else { // The overlap was not set by the user
-            if (diameter.isNaN()) {
-                cellpose.overlap = 30 * 2; // 30 pixels (largest median object size of Cellpose models times 2.0 to be sure.
-                logger.warn("Diameter was not set. Default overlap used");
-            } else {
-                cellpose.overlap = (int) Math.round(2 * diameter);
-            }
+        if (this.channels.length > 2) {
+            logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two", channels.length);
+            this.channels = Arrays.copyOf(this.channels, 2);
         }
-        logger.info("If tiling is necessary, {} pixels overlap will be taken between tiles", cellpose.overlap);
 
-        if (this.normPercentileMax > -1.0 && this.normPercentileMin > -1.0 )
-            logger.warn("You called the builder with normalization, values below 0 and above after normalization will be clipped");
+        cellpose.op = ImageOps.buildImageDataOp(channels);
 
-        // Intersection over union threshold to deal with duplicates
-        cellpose.iouThreshold = iouThreshold;
+        // these are all the cellpose parameters we wish to send to the command line.
+        cellpose.parameters = this.cellposeParameters;
+
+        cellpose.globalPreprocess = globalPreprocessing;
+        cellpose.preprocess = new ArrayList<>(preprocessing);
+
+        cellpose.pixelSize = pixelSize;
         cellpose.cellConstrainScale = cellConstrainScale;
         cellpose.cellExpansion = cellExpansion;
         cellpose.tileWidth = tileWidth;
         cellpose.tileHeight = tileHeight;
         cellpose.ignoreCellOverlaps = ignoreCellOverlaps;
         cellpose.measureShape = measureShape;
+        cellpose.simplifyDistance = simplifyDistance;
         cellpose.constrainToParent = constrainToParent;
         cellpose.creatorFun = creatorFun;
         cellpose.globalPathClass = globalPathClass;
 
         cellpose.compartments = new LinkedHashSet<>(compartments);
 
-        if (measurements != null) cellpose.measurements = new LinkedHashSet<>(measurements);
-        else cellpose.measurements = Collections.emptyList();
+        if (measurements != null)
+            cellpose.measurements = new LinkedHashSet<>(measurements);
+        else
+            cellpose.measurements = Collections.emptyList();
+
+        // If overlap is set, then it takes precedence
+        if (this.overlap != null) {
+            cellpose.overlap = this.overlap;
+        } else {
+            if (this.cellposeParameters.containsKey("diameter")) { // Diameter was set
+                double diameter = Double.parseDouble(this.cellposeParameters.get("diameter"));
+                if (diameter == 0.0) {
+                    cellpose.overlap = 30 * 2;
+                    logger.info("Tile overlap was not set and diameter was set to {}. Will default to {} pixels overlap. Use `.setOverlap( int )` to modify overlap", diameter, cellpose.overlap);
+                } else {
+                }
+                cellpose.overlap = (int) (diameter * 2);
+                logger.info("Tile overlap was not set, but diameter exists. Using provided diameter {} x 2: {} pixels overlap", diameter, cellpose.overlap);
+            } else { // Nothing was set, let's get lucky
+                cellpose.overlap = 30 * 2;
+                logger.info("Neither diameter nor overlap provided. Overlap defaulting to {} pixels. Use `.setOverlap( int )` to modify overlap", cellpose.overlap);
+            }
+        }
+        logger.info("If tiling is necessary, {} pixels overlap will be taken between tiles", cellpose.overlap);
 
         // If we would like to save the builder we can do it here thanks to Serialization and lots of magic by Pete
         if (saveBuilder) {
@@ -739,7 +826,7 @@ public class CellposeBuilder {
 
             DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH'h'mm");
             LocalDateTime now = LocalDateTime.now();
-            File savePath = new File( modelDirectory, builderName+"_"+dtf.format(now)+".json");
+            File savePath = new File(modelDirectory, builderName + "_" + dtf.format(now) + ".json");
 
             try {
                 FileWriter fw = new FileWriter(savePath);
@@ -749,10 +836,12 @@ public class CellposeBuilder {
                 logger.info("Cellpose Builder serialized and saved to {}", savePath);
 
             } catch (IOException e) {
-                logger.error("Could not save builder to JSON file "+savePath.getAbsolutePath(), e);
+                logger.error("Could not save builder to JSON file " + savePath.getAbsolutePath(), e);
             }
         }
 
         return cellpose;
+
     }
+
 }
