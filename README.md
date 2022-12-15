@@ -282,17 +282,6 @@ The output will be under `build/libs`.
 
 # Notes and debugging
 
-## Normalization
-
-Like the StarDist extension, we provide a normalization option `normalizePercentiles`.
-However, the QuPath Stardist Extension that keeps the normalized image in 32-bit with no clipping.
-In turn, because Cellpose does its own normalization, there was no effect from using the normalization. 
-However, the QuPath Cellpose Extension adds a clipping of values below 0.0 and above 1.0 to the normalization.
-
-> Note however that QuPath normalizes channels jointly rather than independently, so you might get some odd results
-
- [Cellpose has implemented turning off their normalization, but it is not yet part of the current cellpose release](https://github.com/MouseLand/cellpose/issues).
-
 ## Preprocessing your data, extracting Color Deconvolution stains
 
 It has been useful to preprocess data to extract color-deconvolved channels feeding these to Cellpose, for example. This is where the `preprocess()` method is useful. 
