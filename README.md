@@ -11,6 +11,8 @@ This repo adds some support to use 2D Cellpose within QuPath through a Python vi
 Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose).
 This extension will need to know the path to your Cellpose environment.
 
+Note that there is currently a bug in Cellpose v2.1.1, where all training and prediction is done twice,
+so until the issue is fixed, the recommended version of cellpose is v2.0.5.
 
 ### NOTE: `scikit-image` Dependency
 As of version 0.4 of this extension, QC (quality control) is run **automatically** when training a model.
@@ -23,6 +25,8 @@ The simplest way to add it, is when installing Cellpose as instructed in the ofi
 python -m pip install cellpose scikit-image
 ```
 
+### This extension no longer works with cellpose versions before 2.0.
+Please keep this in mind and update your cellpose installation in case of problems. 
 
 ### Example Cellpose 2.0.5 installation with CUDA 11.3 GPU support
 
@@ -92,7 +96,7 @@ To copy `run-cellpose-qc.py`, go to Extensions > Installed Extensions and click 
 You might then need to restart QuPath (but not your computer).
 
 > **Note**
-> In case you do not do this step, Cellpose training will still work, but the QC step will be skipped and you will be notified that the `run-cellpose-qc.py` cannot be found.
+> In case you do not do this step, Cellpose training will still work, but the QC step will be skipped, and you will be notified that `run-cellpose-qc.py` cannot be found.
 
 
 ## QuPath Extension Cellpose: First time setup
@@ -146,7 +150,8 @@ def cellpose = Cellpose2D.builder("cyto") // Can choose "None" if you want to tr
 //                .learningRate(0.2)       // Optional: Will default to 0.2
 //                .batchSize(8)            // Optional: Will default to 8
 //                .minTrainMasks(5)        // Optional: Will default to 5
-                .useGPU()                 // Optional: Use the GPU if configured, defaults to CPU only
+//                .addParameter("save_flows")      // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
+//                .addParameter("anisotropy", "3") // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
 //                .modelDirectory( new File("My/folder/for/models")) // Optional place to store resulting model. Will default to QuPath project root, and make a 'models' folder
 //                .saveBuilder("My Builder") // Optional: Will save a builder json file that can be reloaded with Cellpose2D.builder(File builderFile)
                 .build()
@@ -210,33 +215,35 @@ Running Cellpose is done via a script and is very similar to the excellent [QuPa
 
 All builder options that are implemented are [in the Javadoc](https://biop.github.io/qupath-extension-cellpose/)
 
+### Breaking changes after QuPath 0.4.0
+In order to make the extension more flexible and less dependent on the builder, a new Builder method `addParameter(name, value)` is available that can take [any cellpose CLI argument or argument pair](https://cellpose.readthedocs.io/en/latest/command.html#options). 
+For this to work, some elements that were "hard coded" on the builder have been removed, so you will get some errors. For example: `useOmnipose()`, `excludeEdges()` and  `clusterDBSCAN()` no longer exist. 
+You can use `addParameter("omni")`, `addParameter("exclude_on_edges")`, and `addParameter("cluster")` instead.
+
 ```groovy
 import qupath.ext.biop.cellpose.Cellpose2D
 
 // Specify the model name (cyto, nuc, cyto2, omni_bact or a path to your custom model)
 def pathModel = 'cyto2'
-
 def cellpose = Cellpose2D.builder( pathModel )
-        .pixelSize( 0.5 )              // Resolution for detection
-        .channels( 'DAPI' )            // Select detection channel(s)
+        .pixelSize( 0.5 )             // Resolution for detection in um
+        .channels( 'DAPI' )	      // Select detection channel(s)
 //        .preprocess( ImageOps.Filters.median(1) )                // List of preprocessing ImageOps to run on the images before exporting them
-//        .tileSize(2048)                // If your GPU can take it, make larger tiles to process fewer of them. Useful for Omnipose
+        .normalizePercentilesGlobal(0.1, 99.8, 10) // Convenience global percentile normalization. arguments are percentileMin, percentileMax, dowsample.
+        .tileSize(1024)                  // If your GPU can take it, make larger tiles to process fewer of them. Useful for Omnipose
 //        .cellposeChannels(1,2)         // Overwrites the logic of this plugin with these two values. These will be sent directly to --chan and --chan2
-//        .maskThreshold(-0.2)           // Threshold for the mask detection, defaults to 0.0
-//        .flowThreshold(0.5)            // Threshold for the flows, defaults to 0.4 
-//        .diameter(0)                   // Median object diameter. Set to 0.0 for the `bact_omni` model or for automatic computation
-//        .setOverlap(60)                // Overlap between tiles (in pixels) that the QuPath Cellpose Extension will extract. Defaults to 2x the diameter or 60 px if the diameter is set to 0 
-//        .invert()                      // Have cellpose invert the image
-//        .useOmnipose()                 // Add the --omni flag to use the omnipose segmentation model
-//        .excludeEdges()                // Clears objects toutching the edge of the image (Not of the QuPath ROI)
-//        .clusterDBSCAN()               // Use DBSCAN clustering to avoir over-segmenting long object
-//        .cellExpansion(5.0)            // Approximate cells based upon nucleus expansion
+//        .cellprobThreshold(0.0)        // Threshold for the mask detection, defaults to 0.0
+//        .flowThreshold(0.4)            // Threshold for the flows, defaults to 0.4 
+//        .diameter(15)                    // Median object diameter. Set to 0.0 for the `bact_omni` model or for automatic computation
+//        .addParameter("save_flows")      // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
+//        .addParameter("anisotropy", "3") // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
+//        .cellExpansion(5.0)              // Approximate cells based upon nucleus expansion
 //        .cellConstrainScale(1.5)       // Constrain cell expansion using nucleus size
 //        .classify("My Detections")     // PathClass to give newly created objects
-        .measureShape()                // Add shape measurements
-        .measureIntensity()            // Add cell measurements (in all compartments)  
+//        .measureShape()                // Add shape measurements
+//        .measureIntensity()             // Add cell measurements (in all compartments)  
 //        .createAnnotations()           // Make annotations instead of detections. This ignores cellExpansion
-        .useGPU()                      // Optional: Use the GPU if configured, defaults to CPU only
+//        .simplify(0)                   // Simplification 1.6 by default, set to 0 to get the cellpose masks as precisely as possible
         .build()
 
 // Run detection for the selected objects
