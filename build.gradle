@@ -85,6 +85,11 @@ if (!strictJavadoc) {
     }
 }
 
+javadoc {
+    options.addBooleanOption('html5', true)
+    destinationDir = new File(project.rootDir,"docs")
+}
+
 /*
  * Avoid 'Entry .gitkeep is a duplicate but no duplicate handling strategy has been set.'
  * when using withSourcesJar()
