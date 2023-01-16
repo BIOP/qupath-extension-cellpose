@@ -109,6 +109,7 @@ public class CellposeBuilder {
     private List<ImageOp> preprocessing = new ArrayList<>();
 
     private LinkedHashMap<String, String> cellposeParameters = new LinkedHashMap<>();
+    private int nThreads = -1;
 
 
     /**
@@ -142,6 +143,18 @@ public class CellposeBuilder {
         // Need to know setup options in order to guide the user in case of version inconsistency
         this.cellposeSetup = CellposeSetup.getInstance();
 
+    }
+
+    /**
+     * Specify the number of threads to use for processing.
+     * If you encounter problems, setting this to 1 may help to resolve them by preventing
+     * multithreading.
+     * @param nThreads
+     * @return this builder
+     */
+    public CellposeBuilder nThreads(int nThreads) {
+        this.nThreads = nThreads;
+        return this;
     }
 
     /**
@@ -729,6 +742,9 @@ public class CellposeBuilder {
      */
     public Cellpose2D build() {
         Cellpose2D cellpose = new Cellpose2D();
+
+        // Give it the number of threads to use
+        cellpose.nThreads = nThreads;
 
         // Check the model. If it is a file, then it is a custom model
         File file = new File(this.modelNameOrPath);

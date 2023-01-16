@@ -159,7 +159,7 @@ public class Cellpose2D {
     private ResultsTable qcResults;
     private File modelFile;
 
-    private int nThreads = -1;
+    protected int nThreads = -1;
 
     /**
      * Optionally submit runnable to a thread pool. This limits the parallelization used by parallel streams.
@@ -401,6 +401,16 @@ public class Cellpose2D {
      * @param parents   the parent objects; existing child objects will be removed, and replaced by the detected cells
      */
     public void detectObjects(ImageData<BufferedImage> imageData, Collection<? extends PathObject> parents) {
+        runInPool(() -> detectObjectsImpl(imageData, parents));
+    }
+
+    /**
+     * Detect cells within one or more parent objects, firing update events upon completion.
+     *
+     * @param imageData the image data containing the object
+     * @param parents   the parent objects; existing child objects will be removed, and replaced by the detected cells
+     */
+    public void detectObjectsImpl(ImageData<BufferedImage> imageData, Collection<? extends PathObject> parents) {
         //runInPool(() -> detectObjectsImpl(imageData, parents));
         // Multi step process
         // 1. Extract all images and save to temp folder
