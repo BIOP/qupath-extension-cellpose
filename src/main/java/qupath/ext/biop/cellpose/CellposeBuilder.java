@@ -569,6 +569,7 @@ public class CellposeBuilder {
      * @return this builder
      * @deprecated use {@link CellposeBuilder#cellprobThreshold(Double)}
      */
+    @Deprecated
     public CellposeBuilder maskThreshold(Double threshold) {
         logger.warn("'maskThreshold() is deprecated. Replace with cellprobThreshold() in the builder.");
         addParameter("cellprob_threshold", threshold.toString());
