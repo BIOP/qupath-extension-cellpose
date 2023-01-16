@@ -455,13 +455,19 @@ public class Cellpose2D {
             // Get all the required tiles that intersect with the mask ROI
             Geometry mask = parent.getROI().getGeometry();
 
+            /*
+            // This is the StarDist way, but it makes overly large tiles
             List<TileRequest> tiles = opServer.getTileRequestManager().getTileRequests(request)
                     .stream()
                     .filter(t -> mask == null || mask.intersects(GeometryTools.createRectangle(t.getImageX(), t.getImageY(), t.getImageWidth(), t.getImageHeight())))
                     .collect(Collectors.toList());
+            */
 
             Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileWidth * finalDownsample), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileHeight * finalDownsample), true, overlap * finalDownsample);
 
+            List<RegionRequest> tiles = rois.stream().map( r -> {
+                return RegionRequest.createInstance( opServer.getPath(),opServer.getDownsampleForResolution(0), r);
+            }).collect(Collectors.toList());
 
             // Detect all potential nuclei
             ImagePlane plane = request.getImagePlane();
@@ -501,14 +507,17 @@ public class Cellpose2D {
                     .map(t -> {
                         // Make a new RegionRequest with the requested padding
                         // Create a padded request, if we need one
+                        /*
+                        // This is the StarDist way
                         RegionRequest requestPadded = t.getRegionRequest();
                             int x1 = Math.max(0, Math.round(t.getRegionRequest().getX() - finalDownsample * overlap));
                             int y1 = Math.max(0, Math.round(t.getRegionRequest().getY() - finalDownsample * overlap));
                             int x2 = (int)Math.min(server.getWidth(), Math.round(t.getRegionRequest().getMaxX() + finalDownsample * overlap));
                             int y2 = (int)Math.min(server.getHeight(), Math.round(t.getRegionRequest().getMaxY() + finalDownsample * overlap));
                             requestPadded = RegionRequest.createInstance(server.getPath(), finalDownsample, x1, y1, x2-x1, y2-y1, t.getRegionRequest().getZ(), t.getRegionRequest().getT());
-
+                        */
                         try {
+                            RegionRequest requestPadded = t;
                             return saveTileImage(opWithPreprocessing, imageData, requestPadded);
                         } catch (IOException e) {
                             e.printStackTrace();
