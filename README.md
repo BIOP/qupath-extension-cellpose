@@ -1,9 +1,13 @@
 # QuPath Cellpose extension
 
-> **Warning**
-> Versions above v0.6.0 of this extension **will only work on QuPath 0.4.0 or later**. Please update QuPath to the latest version
-
 This repo adds some support to use 2D Cellpose within QuPath through a Python virtual environment.
+
+> **Warning**
+> Versions above v0.6.0 of this extension **will only work on QuPath 0.4.0 or later**. Please update QuPath to the latest version. 
+
+> **Warning**
+> In case you are stuck with QuPath v0.3.2, [the last release to work is v0.5.1](https://github.com/BIOP/qupath-extension-cellpose/releases/tag/v0.5.1)
+
 
 # Installation
 
