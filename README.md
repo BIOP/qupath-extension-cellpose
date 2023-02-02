@@ -1,10 +1,11 @@
 # QuPath Cellpose extension
 
+> **Warning**
+> Versions above v0.6.0 of this extension **will only work on QuPath 0.4.0 or later**. Please update QuPath to the latest version
+
 This repo adds some support to use 2D Cellpose within QuPath through a Python virtual environment.
 
-
 # Installation
-
 
 ## Step 1: Install Cellpose
 
@@ -86,6 +87,7 @@ C:\Users\oburri\.conda\envs\cellpose-205\python.exe
 
 
 ## Step 2: Install the QuPath Cellpose extension
+
 Download the latest `qupath-extension-cellpose-[version].zip` file from [releases](https://github.com/biop/qupath-extension-cellpose/releases) and unzip it into your `extensions` directory. 
 
 If your extensions directory is unset, unzip and drag & drop `qupath-extension-cellpose-[version].jar` onto the main QuPath window. You'll be prompted to select a QuPath user directory.
