@@ -444,9 +444,9 @@ public class Cellpose2D {
 
 
         // Get downsample factor
-        int downsample = 1;
+        double downsample = 1;
         if (Double.isFinite(pixelSize) && pixelSize > 0) {
-            downsample = (int) Math.round(pixelSize / imageData.getServer().getPixelCalibration().getAveragedPixelSize().doubleValue());
+            downsample = Math.round(pixelSize / imageData.getServer().getPixelCalibration().getAveragedPixelSize().doubleValue());
         }
 
         ImageServer<BufferedImage> server = imageData.getServer();
@@ -454,7 +454,7 @@ public class Cellpose2D {
 
         double expansion = cellExpansion / cal.getAveragedPixelSize().doubleValue();
 
-        final int finalDownsample = downsample;
+        final double finalDownsample = downsample;
 
         List<PathTile> allTiles = parents.parallelStream().map(parent -> {
             RegionRequest request = RegionRequest.createInstance(
@@ -473,7 +473,7 @@ public class Cellpose2D {
                     .collect(Collectors.toList());
             */
 
-            Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileWidth * finalDownsample), ImmutableDimension.getInstance(tileWidth * finalDownsample, tileHeight * finalDownsample), true, overlap * finalDownsample);
+            Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileWidth * finalDownsample)), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileHeight * finalDownsample)), true, (int) (overlap * finalDownsample));
 
             List<RegionRequest> tiles = rois.stream().map( r -> {
                 return RegionRequest.createInstance( opServer.getPath(),opServer.getDownsampleForResolution(0), r);
@@ -546,7 +546,7 @@ public class Cellpose2D {
         }
 
         // Recover all the images from CellPose to get the masks
-        int finalDownsample1 = downsample;
+        double finalDownsample1 = downsample;
         allTiles.parallelStream().forEach(tileMap -> {
             PathObject parent = tileMap.getObject();
             // Read each image
