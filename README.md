@@ -7,6 +7,12 @@ developers and there are incompatibilities between the current Cellpose and Omni
 
 We have decided to provide support for both using cellpose and omnipose, in the form of two separate environments, so that
 they can play nice. 
+=======
+> **Warning**
+> Versions above v0.6.0 of this extension **will only work on QuPath 0.4.0 or later**. Please update QuPath to the latest version. 
+
+> **Warning**
+> In case you are stuck with QuPath v0.3.2, [the last release to work is v0.5.1](https://github.com/BIOP/qupath-extension-cellpose/releases/tag/v0.5.1)
 
 # Installation
 
@@ -55,6 +61,7 @@ F:\conda-envs\cellpose-omnipose-biop-gpu\python.exe
 > While this example is done under Windows, this will work on Mac and Linux as well. 
 
 ## Step 2: Install the QuPath Cellpose extension
+
 Download the latest `qupath-extension-cellpose-[version].zip` file from [releases](https://github.com/biop/qupath-extension-cellpose/releases) and unzip it into your `extensions` directory. 
 
 If your extensions directory is unset, unzip and drag & drop `qupath-extension-cellpose-[version].jar` onto the main QuPath window. You'll be prompted to select a QuPath user directory.
