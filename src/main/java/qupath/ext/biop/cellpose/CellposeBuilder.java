@@ -17,7 +17,6 @@
 package qupath.ext.biop.cellpose;
 
 import com.google.gson.Gson;
-import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.analysis.features.ObjectMeasurements.Compartments;
@@ -49,9 +48,9 @@ import static qupath.ext.biop.cellpose.OpCreators.TileOpCreator;
  *     "Cell Detection with Star-convex Polygons."
  *   <i>International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI)</i>, Granada, Spain, September 2018.
  * </pre>
- * See the main repo at https://github.com/mpicbg-csbd/stardist
+ * See the main repo at <a href="https://github.com/mpicbg-csbd/stardist">...</a>
  * <p>
- * Very much inspired by stardist-imagej at https://github.com/mpicbg-csbd/stardist-imagej but re-written from scratch to use OpenCV and
+ * Very much inspired by stardist-imagej at <a href="https://github.com/mpicbg-csbd/stardist-imagej">...</a> but re-written from scratch to use OpenCV and
  * adapt the method of converting predictions to contours (very slightly) to be more QuPath-friendly.
  * <p>
  * Models are expected in the same format as required by the Fiji plugin, or converted to a frozen .pb file for use with OpenCV.
@@ -61,24 +60,23 @@ import static qupath.ext.biop.cellpose.OpCreators.TileOpCreator;
 public class CellposeBuilder {
 
     private static final Logger logger = LoggerFactory.getLogger(CellposeBuilder.class);
-
+    private final transient CellposeSetup cellposeSetup;
+    private final Double probaThreshold = 0.0;
+    private final Double flowThreshold = 0.0;
+    private final Double diameter = 0.0;
+    private final File trainDirectory = null;
+    private final File valDirectory = null;
+    private final Integer nEpochs = null;
+    private final Integer batchSize = null;
+    private final Double learningRate = Double.NaN;
+    private final Integer minTrainMasks = null;
+    private final List<ImageOp> ops = new ArrayList<>();
+    private final List<ImageOp> preprocessing = new ArrayList<>();
+    private final LinkedHashMap<String, String> cellposeParameters = new LinkedHashMap<>();
     // Cellpose Related Options
     private String modelNameOrPath;
-    private transient CellposeSetup cellposeSetup;
-
-    private Double probaThreshold = 0.0;
-    private Double flowThreshold = 0.0;
-    private Double diameter = 0.0;
-
     // Cellpose Training options
     private File modelDirectory = null;
-    private File trainDirectory = null;
-    private File valDirectory = null;
-    private Integer nEpochs = null;
-    private Integer batchSize = null;
-    private Double learningRate = Double.NaN;
-    private Integer minTrainMasks = null;
-
     // QuPath Object handling options
     private ColorTransform[] channels = new ColorTransform[0];
     private Double cellExpansion = Double.NaN;
@@ -90,25 +88,15 @@ public class CellposeBuilder {
     private PathClass globalPathClass = PathClass.getNullClass();
     private Boolean measureShape = Boolean.FALSE;
     private Boolean constrainToParent = Boolean.TRUE;
-
     private Function<ROI, PathObject> creatorFun;
     private Collection<Compartments> compartments = Arrays.asList(Compartments.values());
     private Collection<Measurements> measurements;
-    private List<ImageOp> ops = new ArrayList<>();
-
     private transient boolean saveBuilder;
     private transient String builderName;
-
     private Integer overlap = null;
-
     private double simplifyDistance = 1.4;
-
     private Map<Integer, PathClass> classifications;
-
     private TileOpCreator globalPreprocessing;
-    private List<ImageOp> preprocessing = new ArrayList<>();
-
-    private LinkedHashMap<String, String> cellposeParameters = new LinkedHashMap<>();
     private int nThreads = -1;
 
 
@@ -133,6 +121,7 @@ public class CellposeBuilder {
 
     /**
      * Build a cellpose model by providing a string which can be the name of a pretrained model or a path to a custom model
+     *
      * @param modelPath the model name or path
      */
     protected CellposeBuilder(String modelPath) {
@@ -149,7 +138,8 @@ public class CellposeBuilder {
      * Specify the number of threads to use for processing.
      * If you encounter problems, setting this to 1 may help to resolve them by preventing
      * multithreading.
-     * @param nThreads
+     *
+     * @param nThreads the number of threads to use
      * @return this builder
      */
     public CellposeBuilder nThreads(int nThreads) {
@@ -176,12 +166,11 @@ public class CellposeBuilder {
     /**
      * Add preprocessing operations, if required.
      *
-     * @param ops
+     * @param ops a series of ImageOps to apply to the input image
      * @return this builder
      */
     public CellposeBuilder preprocess(ImageOp... ops) {
-        for (var op : ops)
-            this.preprocessing.add(op);
+        Collections.addAll(this.preprocessing, ops);
         return this;
     }
 
@@ -251,7 +240,7 @@ public class CellposeBuilder {
      * <p>
      * This makes it possible to supply color deconvolved channels, for example.
      *
-     * @param channels
+     * @param channels the channels to use
      * @return this builder
      */
     public CellposeBuilder channels(ColorTransform... channels) {
@@ -268,7 +257,7 @@ public class CellposeBuilder {
      * <p>
      * In short, be wary.
      *
-     * @param distance
+     * @param distance expansion distance in microns
      * @return this builder
      */
     public CellposeBuilder cellExpansion(double distance) {
@@ -303,7 +292,7 @@ public class CellposeBuilder {
     /**
      * Request that a classification is applied to all created objects.
      *
-     * @param pathClass
+     * @param pathClass the classification to give to all detected PathObjects
      * @return this builder
      */
     public CellposeBuilder classify(PathClass pathClass) {
@@ -315,11 +304,11 @@ public class CellposeBuilder {
      * Request that a classification is applied to all created objects.
      * This is a convenience method that get a {@link PathClass} from a String representation.
      *
-     * @param pathClassName
+     * @param pathClassName the classification to give to all detected PathObjects as a String
      * @return this builder
      */
     public CellposeBuilder classify(String pathClassName) {
-        return classify(PathClass.fromString(pathClassName, (Integer) null));
+        return classify(PathClass.fromString(pathClassName, null));
     }
 
     /**
@@ -554,6 +543,8 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder useOmnipose() {
+        if (cellposeSetup.getOmniposePytonPath() == "")
+            logger.warn("Omnipose environment path not set. Using cellpose path instead.");
         addParameter("omni");
         return this;
     }
@@ -568,6 +559,12 @@ public class CellposeBuilder {
         return this;
     }
 
+    /**
+     * Explicitly set the cellpose channels manually. This corresponds to --chan and --chan2
+     * @param channel1 --chan value passed to cellpose/omnipose
+     * @param channel2 --chan2 value passed to cellpose/omnipose
+     * @return
+     */
     public CellposeBuilder cellposeChannels(Integer channel1, Integer channel2) {
         addParameter("chan", channel1.toString());
         addParameter("chan2", channel2.toString());
@@ -707,8 +704,9 @@ public class CellposeBuilder {
 
     /**
      * Convenience method to call global normalization for the dataset
-     * @param percentileMin the min percentile 0-100
-     * @param percentileMax the max percentile 0-100
+     *
+     * @param percentileMin  the min percentile 0-100
+     * @param percentileMax  the max percentile 0-100
      * @param normDownsample a large downsample for the computation to be efficient over the whole image
      * @return this builder
      */
@@ -729,7 +727,8 @@ public class CellposeBuilder {
 
     /**
      * convenience method? to deactivate cellpose normalization.
-     * @return
+     *
+     * @return this builder
      */
     public CellposeBuilder noCellposeNormalization() {
         return this.addParameter("no_norm");
@@ -738,7 +737,7 @@ public class CellposeBuilder {
     /**
      * Create a {@link Cellpose2D}, all ready for detection.
      *
-     * @return
+     * @return a new {@link Cellpose2D} instance
      */
     public Cellpose2D build() {
         Cellpose2D cellpose = new Cellpose2D();
@@ -773,13 +772,6 @@ public class CellposeBuilder {
         trainDirectory.mkdirs();
         valDirectory.mkdirs();
 
-        // Cleanup a previous run
-        try {
-            FileUtils.cleanDirectory(trainDirectory);
-            FileUtils.cleanDirectory(valDirectory);
-        } catch (IOException e) {
-            logger.error(e.getMessage(), e);
-        }
         cellpose.modelDirectory = modelDirectory;
         cellpose.trainDirectory = trainDirectory;
         cellpose.valDirectory = valDirectory;

@@ -1,12 +1,6 @@
 package qupath.ext.biop.cellpose;
 
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.StringProperty;
-import javafx.collections.FXCollections;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.biop.cmd.VirtualEnvironmentRunner;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.extensions.GitHubProject;
@@ -14,7 +8,6 @@ import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.gui.panes.PreferencePane;
 import qupath.lib.gui.prefs.PathPrefs;
 
-import qupath.ext.biop.cmd.VirtualEnvironmentRunner.EnvType;
 
 /**
  * Install Cellpose as an extension.
@@ -24,8 +17,6 @@ import qupath.ext.biop.cmd.VirtualEnvironmentRunner.EnvType;
  * @author Olivier Burri
  */
 public class CellposeExtension implements QuPathExtension, GitHubProject {
-    private final static Logger logger = LoggerFactory.getLogger(CellposeExtension.class);
-
 
     @Override
     public GitHubRepo getRepository() {
@@ -39,26 +30,24 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         CellposeSetup options = CellposeSetup.getInstance();
 
         // Create the options we need
-        ObjectProperty<EnvType> envType = PathPrefs.createPersistentPreference("cellposeEnvType", EnvType.CONDA, EnvType.class);
-        StringProperty envPath = PathPrefs.createPersistentPreference("cellposeEnvPath", "");
+        StringProperty cellposePath = PathPrefs.createPersistentPreference("cellposePythonPath", "");
+        StringProperty omniposePath = PathPrefs.createPersistentPreference("cellposeOmniposePath", "");
 
         //Set options to current values
-        options.setEnvironmentType(envType.get());
-        options.setEnvironmentNameOrPath(envPath.get());
+        options.setCellposePytonPath(cellposePath.get());
+        options.setOmniposePytonPath(omniposePath.get());
 
         // Listen for property changes
-        envType.addListener((v,o,n) -> options.setEnvironmentType(n));
-        envPath.addListener((v,o,n) -> options.setEnvironmentNameOrPath(n));
+        cellposePath.addListener((v, o, n) -> options.setCellposePytonPath(n));
+        omniposePath.addListener((v, o, n) -> options.setOmniposePytonPath(n));
 
         // Add Permanent Preferences and Populate Preferences
         PreferencePane prefs = QuPathGUI.getInstance().getPreferencePane();
 
-        prefs.addPropertyPreference(envPath, String.class, "Cellpose Environment name or directory", "Cellpose",
-                "Enter either the directory where your chosen Cellpose virtual environment (conda or venv) is located. Or the name of the conda environment you created.");
-        prefs.addChoicePropertyPreference(envType,
-                FXCollections.observableArrayList(VirtualEnvironmentRunner.EnvType.values()),
-                VirtualEnvironmentRunner.EnvType.class,"Cellpose Environment Type", "Cellpose",
-                "This changes how the environment is started.");
+        prefs.addPropertyPreference(cellposePath, String.class, "Cellpose Python executable location", "Cellpose/Omnipose",
+                "Enter the full path to your cellpose environment, including 'python.exe' or equivalent.");
+        prefs.addPropertyPreference(omniposePath, String.class, "Omnipose Python executable location (Optional)", "Cellpose/Omnipose",
+                "Enter the full path to your omnipose environment, including 'python.exe' or equivalent.");
     }
 
     @Override
@@ -76,11 +65,4 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         return QuPathExtension.super.getQuPathVersion();
     }
 
-    /* // Removed as no longer needed because version gets read into manifest
-    @Override
-    public Version getVersion() {
-        return Version.parse("0.3.5");
-    }
-
- */
 }
