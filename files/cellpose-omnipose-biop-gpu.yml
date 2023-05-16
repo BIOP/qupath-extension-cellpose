@@ -1,0 +1,15 @@
+name: cellpose-omnipose-biop-gpu
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python>=3.8
+  - pytorch-cuda=11.7
+  - pytorch
+  - mahotas=1.4.13
+  - pip
+  - pip:
+    - cellpose==2.2.1
+    - omnipose==0.4.4
+    - scikit-image==0.20.0

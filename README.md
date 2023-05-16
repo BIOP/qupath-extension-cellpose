@@ -1,23 +1,26 @@
-# QuPath Cellpose extension
+# QuPath Cellpose/Omnipose extension
 
 This repo adds some support to use 2D Cellpose within QuPath through a Python virtual environment.
 
+We also want to use Omnipose, which offers some amazing features, but there is currently no consensus between the 
+developers and there are incompatibilities between the current Cellpose and Omnipose versions.
+
+We have decided to provide support for both using cellpose and omnipose, in the form of two separate environments, so that
+they can play nice. 
+=======
 > **Warning**
 > Versions above v0.6.0 of this extension **will only work on QuPath 0.4.0 or later**. Please update QuPath to the latest version. 
 
 > **Warning**
 > In case you are stuck with QuPath v0.3.2, [the last release to work is v0.5.1](https://github.com/BIOP/qupath-extension-cellpose/releases/tag/v0.5.1)
 
-
 # Installation
 
-## Step 1: Install Cellpose
+## Step 1: Install Cellpose and Omnipose
 
-Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose).
-This extension will need to know the path to your Cellpose environment.
-
-Note that there is currently a bug in Cellpose v2.1.1, where all training and prediction is done twice,
-so until the issue is fixed, the recommended version of cellpose is v2.0.5.
+Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose). And
+Omnipose from [the main Omnipose repository](https://omnipose.readthedocs.io/installation.html)
+This extension will need to know the path to at least your Cellpose environment. If you plan on using Omnipose, you will also need to install it. 
 
 ### NOTE: `scikit-image` Dependency
 As of version 0.4 of this extension, QC (quality control) is run **automatically** when training a model.
@@ -25,70 +28,37 @@ As of version 0.4 of this extension, QC (quality control) is run **automatically
 Due to the dependencies of the validation code, located inside [run-cellpose-qc.py](QC/run-cellpose-qc.py) requires an 
 extra dependency on `scikit-image`.
 
-The simplest way to add it, is when installing Cellpose as instructed in the oficial repository and adding scikit-image
+The simplest way to add it, is when installing Cellpose as instructed in the official repository and adding scikit-image
 ```bash
 python -m pip install cellpose scikit-image
 ```
-
-### This extension no longer works with cellpose versions before 2.0.
-Please keep this in mind and update your cellpose installation in case of problems. 
-
-### Example Cellpose 2.0.5 installation with CUDA 11.3 GPU support
-
-First, we create the conda environment:
+or
+```bash
+python -m pip install omnipose scikit-image
 ```
-conda create -n cellpose-205 python=3.8
-conda activate cellpose-205
-pip install cellpose==2.0.5 scikit-image==0.19.3
-pip uninstall torch
-pip install torch --extra-index-url https://download.pytorch.org/whl/cu113
-```
-<details>
-  <summary>See the 'pip freeze' result</summary>
 
+## Installation with Conda/Mamba
+We provide the following YAML file that installs Cellpose and omnipose in the same environment.
+The configuration files are without guarantee, but these are the ones we use for our Windows machines.
+[Download `cellpose-omnipose-biop-gpu.yml`](files/cellpose-omnipose-biop-gpu.yml)
+
+You can create the environment with the following command using either conda or mamba:
+
+```bash
+mamba env create -f cellpose-omnipose-biop-gpu.yml
 ```
-cellpose==2.0.5
-certifi @ file:///C:/Windows/TEMP/abs_e9b7158a-aa56-4a5b-87b6-c00d295b01fanefpc8_o/croots/recipe/certifi_1655968940823/work/certifi
-charset-normalizer==2.0.12
-colorama==0.4.5
-fastremap==1.13.0
-idna==3.3
-imagecodecs==2022.2.22
-imageio==2.21.2
-llvmlite==0.38.1
-natsort==8.1.0
-networkx==2.8.6
-numba==0.55.2
-numpy==1.22.4
-opencv-python-headless==4.6.0.66
-packaging==21.3
-Pillow==9.1.1
-pyparsing==3.0.9
-PyWavelets==1.3.0
-requests==2.28.0
-scikit-image==0.19.3
-scipy==1.8.1
-tifffile==2022.5.4
-torch==1.11.0+cu113
-torchaudio==0.11.0+cu113
-torchvision==0.12.0+cu113
-tqdm==4.64.0
-typing_extensions==4.2.0
-urllib3==1.26.9
-wincertstore==0.2
-```
-</details>
-    
-Next, we look for the Python executable, **which we will need later when configuring the QuPath Cellpose extension**.
+
+### Check the path to the Python executable
+We will need this information later when configuring the QuPath Cellpose extension.
 
 ```
+mamba activa te cellpose-omnipose-biop-gpu
 where python
-C:\Users\oburri\.conda\envs\cellpose-205\python.exe
+F:\conda-envs\cellpose-omnipose-biop-gpu\python.exe
 ```
 
 > **Note**
 > While this example is done under Windows, this will work on Mac and Linux as well. 
-
 
 ## Step 2: Install the QuPath Cellpose extension
 
@@ -105,14 +75,21 @@ You might then need to restart QuPath (but not your computer).
 > In case you do not do this step, Cellpose training will still work, but the QC step will be skipped, and you will be notified that `run-cellpose-qc.py` cannot be found.
 
 
-## QuPath Extension Cellpose: First time setup
+## QuPath Extension Cellpose/Omnipose: First time setup
 
-Go to `Edit > Preferences > Cellpose`
+Go to `Edit > Preferences > Cellpose/Omnipose`
 Complete the fields with the requested information. based on the `conda` installation above, this is what it should look like:
 ![Cellpose setup example](files/cellpose-qupath-setup-example.png)
 > **Note**
-> Prefer using "Python Executable" as Cellpose Environment Type, as this is more OS-agnostic than the other methods, which may become deprecated in the future.
+You have the possibility to provide **two** different environments. One for Cellpose and one for Omnipose. 
+> If you do not plan on using Omnipose or have installed both cellpose and Omnipose in the same environment, you can leave it blank.
 
+The reason for this is that there may be versions of cellpose and its dependencies that might not match with Omnipose. Adding to that, some parameters
+in cellpose and omnipose are currently out of sync, so it could be wiser to keep them separate.
+
+> **Warning** as of this writing, the versions used are `cellpose==2.2.1` and `omnipose==0.4.4`
+
+**The extension handles switching between the two based on the `useOmnipose()` flag in the builder.**
 
 ## Running Cellpose the first time in standalone
 
@@ -121,7 +98,6 @@ QuPath due to permission issues.
 
 One trick is to **run Cellpose from the command line** once with the model you want to use. The download should work from there,
 and you can then use it within the QuPath Extension Cellpose.
-
 
 # Using the Cellpose QuPath Extension
 
@@ -223,33 +199,37 @@ All builder options that are implemented are [in the Javadoc](https://biop.githu
 
 ### Breaking changes after QuPath 0.4.0
 In order to make the extension more flexible and less dependent on the builder, a new Builder method `addParameter(name, value)` is available that can take [any cellpose CLI argument or argument pair](https://cellpose.readthedocs.io/en/latest/command.html#options). 
-For this to work, some elements that were "hard coded" on the builder have been removed, so you will get some errors. For example: `useOmnipose()`, `excludeEdges()` and  `clusterDBSCAN()` no longer exist. 
-You can use `addParameter("omni")`, `addParameter("exclude_on_edges")`, and `addParameter("cluster")` instead.
+For this to work, some elements that were "hard coded" on the builder have been removed, so you will get some errors. For example: `excludeEdges()` and `clusterDBSCAN()` no longer exist. 
+You can use `addParameter("exclude_on_edges")`, and `addParameter("cluster")` instead.
 
 ```groovy
 import qupath.ext.biop.cellpose.Cellpose2D
+// For all the options from cellpose: https://cellpose.readthedocs.io/en/latest/cli.html
+// For all the options from omnipose: https://omnipose.readthedocs.io/command.html#all-options
 
 // Specify the model name (cyto, nuc, cyto2, omni_bact or a path to your custom model)
 def pathModel = 'cyto2'
 def cellpose = Cellpose2D.builder( pathModel )
-        .pixelSize( 0.5 )             // Resolution for detection in um
-        .channels( 'DAPI' )	      // Select detection channel(s)
+        .pixelSize( 0.5 )                  // Resolution for detection in um
+        .channels( 'DAPI' )	               // Select detection channel(s)
 //        .preprocess( ImageOps.Filters.median(1) )                // List of preprocessing ImageOps to run on the images before exporting them
-        .normalizePercentilesGlobal(0.1, 99.8, 10) // Convenience global percentile normalization. arguments are percentileMin, percentileMax, dowsample.
-        .tileSize(1024)                  // If your GPU can take it, make larger tiles to process fewer of them. Useful for Omnipose
-//        .cellposeChannels(1,2)         // Overwrites the logic of this plugin with these two values. These will be sent directly to --chan and --chan2
-//        .cellprobThreshold(0.0)        // Threshold for the mask detection, defaults to 0.0
-//        .flowThreshold(0.4)            // Threshold for the flows, defaults to 0.4 
+//        .normalizePercentilesGlobal(0.1, 99.8, 10) // Convenience global percentile normalization. arguments are percentileMin, percentileMax, dowsample.
+//        .tileSize(1024)                  // If your GPU can take it, make larger tiles to process fewer of them. Useful for Omnipose
+//        .cellposeChannels(1,2)           // Overwrites the logic of this plugin with these two values. These will be sent directly to --chan and --chan2
+//        .cellprobThreshold(0.0)          // Threshold for the mask detection, defaults to 0.0
+//        .flowThreshold(0.4)              // Threshold for the flows, defaults to 0.4 
 //        .diameter(15)                    // Median object diameter. Set to 0.0 for the `bact_omni` model or for automatic computation
-//        .addParameter("save_flows")      // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
-//        .addParameter("anisotropy", "3") // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
+//        .useOmnipose()                   // Use the omnipose instead
+//        .addParameter("cluster")         // Any parameter from cellpose or omnipose not available in the builder. 
+//        .addParameter("save_flows")      // Any parameter from cellpose or omnipose not available in the builder.
+//        .addParameter("anisotropy", "3") // Any parameter from cellpose or omnipose not available in the builder.
 //        .cellExpansion(5.0)              // Approximate cells based upon nucleus expansion
-//        .cellConstrainScale(1.5)       // Constrain cell expansion using nucleus size
-//        .classify("My Detections")     // PathClass to give newly created objects
-//        .measureShape()                // Add shape measurements
-//        .measureIntensity()             // Add cell measurements (in all compartments)  
-//        .createAnnotations()           // Make annotations instead of detections. This ignores cellExpansion
-//        .simplify(0)                   // Simplification 1.6 by default, set to 0 to get the cellpose masks as precisely as possible
+//        .cellConstrainScale(1.5)         // Constrain cell expansion using nucleus size
+//        .classify("My Detections")       // PathClass to give newly created objects
+//        .measureShape()                  // Add shape measurements
+//        .measureIntensity()              // Add cell measurements (in all compartments)  
+//        .createAnnotations()             // Make annotations instead of detections. This ignores cellExpansion
+//        .simplify(0)                     // Simplification 1.6 by default, set to 0 to get the cellpose masks as precisely as possible
         .build()
 
 // Run detection for the selected objects
@@ -265,13 +245,16 @@ println 'Done!'
 
 # Citing
 
-If you use this extension, you should cite the original Cellpose publication
-- Stringer, C., Wang, T., Michaelos, M. et al. 
-[*Cellpose: a generalist algorithm for cellular segmentation*](https://arxiv.org/abs/1806.03535)
-Nat Methods 18, 100–106 (2021). https://doi.org/10.1038/s41592-020-01018-x
+If you use this extension, you should cite the following publications
 
-**You should also cite the QuPath publication, as described [here](https://qupath.readthedocs.io/en/stable/docs/intro/citing.html).**
+Stringer, C., Wang, T., Michaelos, M. et al **Cellpose: a generalist algorithm for cellular segmentation**. Nat Methods 18, 100–106 (2021). https://doi.org/10.1038/s41592-020-01018-x
 
+Pachitariu, M., Stringer, C. **Cellpose 2.0: how to train your own model**. Nat Methods 19, 1634–1641 (2022). https://doi.org/10.1038/s41592-022-01663-4
+
+Cutler, K.J., Stringer, C., Lo, T.W. et al. **Omnipose: a high-precision morphology-independent solution for bacterial cell segmentation**. Nat Methods 19, 1438–1448 (2022). https://doi.org/10.1038/s41592-022-01639-4
+
+Bankhead, P. et al. **QuPath: Open source software for digital pathology image analysis**. Scientific Reports (2017).
+https://doi.org/10.1038/s41598-017-17204-5
 
 # Building
 
@@ -306,7 +289,6 @@ In case you end up with split detections, this is caused by the overlap calculat
 In turn, this causes the QuPath extension to fail to extract tiles with sufficient overlap.
 Use `setOverlap( int )` in the builder to set the overlap (in pixels) to a value 2x larger than the largest object you are segmenting.
 
-
 ### To find the overlap
 
 You can draw a line ROI across your largest object in QuPath and run the following one-line script
@@ -316,6 +298,5 @@ print "Selected Line length is " + Math.round(getSelectedObject().getROI().getLe
 Double whatever value is output from the script and use it in `setOverlap( int )` in the builder.
 
 ## Ubuntu Error 13: Permission Denied
-
 [As per this post here](https://forum.image.sc/t/could-not-execute-system-command-in-qupath-thanks-to-groovy-script-and-java-processbuilder-class/61629/2?u=oburri), there is a permissions issue when using Ubuntu, which does not allow Java's `ProcessBuilder` to run. 
 The current workaround is [to build QuPath from source](https://qupath.readthedocs.io/en/stable/docs/reference/building.html) in Ubuntu, which then allows the use of the `ProcessBuilder`, which is the magic piece of code that actually calls Cellpose.
