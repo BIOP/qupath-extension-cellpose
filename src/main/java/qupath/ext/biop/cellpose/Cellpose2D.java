@@ -154,7 +154,7 @@ public class Cellpose2D {
     protected File trainDirectory;
     protected File valDirectory;
     protected int nThreads = -1;
-    private File cellposeTempFolder;
+    File tempDirectory;
     private String[] theLog;
     // Results table from the training
     private ResultsTable trainingResults;
@@ -421,16 +421,10 @@ public class Cellpose2D {
 
         Objects.requireNonNull(parents);
 
-        // Define temporary folder to work in
-        cellposeTempFolder = getCellposeTempFolder();
-
-        boolean mkdirs = cellposeTempFolder.mkdirs();
-        if (!mkdirs)
-            logger.info("Folder creation of {} was interrupted. Either the folder exists or there was a problem.", cellposeTempFolder);
         try {
-            FileUtils.cleanDirectory(cellposeTempFolder);
+            FileUtils.cleanDirectory(tempDirectory);
         } catch (IOException e) {
-            logger.error("Could not clean temp directory {}", cellposeTempFolder);
+            logger.error("Could not clean temp directory {}", tempDirectory);
             logger.error("Message: ", e);
         }
 
@@ -649,9 +643,6 @@ public class Cellpose2D {
 
     }
 
-    private File getCellposeTempFolder() {
-        return new File(Projects.getBaseDirectory(QPEx.getQuPath().getProject()), "cellpose-temp");
-    }
 
     private PathObject convertToObject(CandidateObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
         var geomNucleus = simplify(object.geometry);
@@ -845,7 +836,7 @@ public class Cellpose2D {
 
         //BufferedImage image = OpenCVTools.matToBufferedImage(mat);
 
-        File tempFile = new File(cellposeTempFolder,
+        File tempFile = new File(tempDirectory,
                 "Temp_" +
                         request.getX() + "_" +
                         request.getY() +
@@ -888,7 +879,7 @@ public class Cellpose2D {
         List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-W", "ignore", "-m", runCommand));
 
         cellposeArguments.add("--dir");
-        cellposeArguments.add("" + this.cellposeTempFolder);
+        cellposeArguments.add("" + this.tempDirectory);
 
         cellposeArguments.add("--pretrained_model");
         cellposeArguments.add("" + this.model);
@@ -1012,8 +1003,8 @@ public class Cellpose2D {
         // Assume that cellpose training was already run and run cellpose again on the /test folder
         logger.info("Running the new model {} on the validation images to obtain labels for QC", this.modelFile.getName());
 
-        File tmp = this.cellposeTempFolder;
-        this.cellposeTempFolder = this.valDirectory;
+        File tmp = this.tempDirectory;
+        this.tempDirectory = this.valDirectory;
 
         String tmpModel = this.model;
         this.model = modelFile.getAbsolutePath();
@@ -1024,7 +1015,7 @@ public class Cellpose2D {
             logger.error(e.getMessage(), e);
         }
         // Make sure things are back the way they were
-        this.cellposeTempFolder = tmp;
+        this.tempDirectory = tmp;
         this.model = tmpModel;
     }
 
