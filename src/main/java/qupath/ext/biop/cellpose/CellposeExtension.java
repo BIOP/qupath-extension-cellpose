@@ -31,7 +31,7 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
         // Create the options we need
         StringProperty cellposePath = PathPrefs.createPersistentPreference("cellposePythonPath", "");
-        StringProperty omniposePath = PathPrefs.createPersistentPreference("cellposeOmniposePath", "");
+        StringProperty omniposePath = PathPrefs.createPersistentPreference("omniposePythonPath", "");
 
         //Set options to current values
         options.setCellposePytonPath(cellposePath.get());
@@ -44,10 +44,10 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         // Add Permanent Preferences and Populate Preferences
         PreferencePane prefs = QuPathGUI.getInstance().getPreferencePane();
 
-        prefs.addPropertyPreference(cellposePath, String.class, "Cellpose Python executable location", "Cellpose/Omnipose",
-                "Enter the full path to your cellpose environment, including 'python.exe' or equivalent.");
-        prefs.addPropertyPreference(omniposePath, String.class, "Omnipose Python executable location (Optional)", "Cellpose/Omnipose",
-                "Enter the full path to your omnipose environment, including 'python.exe' or equivalent.");
+        prefs.addPropertyPreference(cellposePath, String.class, "Cellpose 'python.exe' location", "Cellpose/Omnipose",
+                "Enter the full path to your cellpose environment, including 'python.exe'");
+        prefs.addPropertyPreference(omniposePath, String.class, "Omnipose 'python.exe location (Optional)", "Cellpose/Omnipose",
+                "Enter the full path to your omnipose environment, including 'python.exe'");
     }
 
     @Override
@@ -57,7 +57,7 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
     @Override
     public String getDescription() {
-        return "An extension for QuPath that allows running Cellpose by calling a Python virtual Environment";
+        return "An extension that allows running a Cellpose/Omnipose Virtual Environment within QuPath";
     }
 
     @Override
