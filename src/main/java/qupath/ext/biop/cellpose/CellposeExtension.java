@@ -1,12 +1,18 @@
 package qupath.ext.biop.cellpose;
 
 import javafx.beans.property.StringProperty;
+import org.controlsfx.control.action.Action;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.extensions.GitHubProject;
 import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.gui.panes.PreferencePane;
 import qupath.lib.gui.prefs.PathPrefs;
+import qupath.lib.gui.tools.MenuTools;
+
+import java.util.Map;
 
 
 /**
@@ -18,6 +24,15 @@ import qupath.lib.gui.prefs.PathPrefs;
  */
 public class CellposeExtension implements QuPathExtension, GitHubProject {
 
+    private static final Logger logger = LoggerFactory.getLogger(CellposeExtension.class);
+
+    private boolean isInstalled = false;
+
+    private static final Map<String, String> SCRIPTS = Map.of(
+            "Cellpose training script template", "scripts/Cellpose_training_template.groovy",
+            "Cellpose detection script template", "scripts/Cellpose_detection_template.groovy"
+    );
+
     @Override
     public GitHubRepo getRepository() {
         return GitHubRepo.create("Cellpose 2D QuPath Extension", "biop", "qupath-extension-cellpose");
@@ -25,7 +40,23 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
     @Override
     public void installExtension(QuPathGUI qupath) {
+        if(isInstalled)
+            return;
 
+        SCRIPTS.entrySet().forEach(entry -> {
+            var name = entry.getValue();
+            var command = entry.getKey();
+            try (var stream = CellposeExtension.class.getClassLoader().getResourceAsStream(name)) {
+                var script = new String(stream.readAllBytes(), "UTF-8");
+                if (script != null) {
+                    MenuTools.addMenuItems(
+                            qupath.getMenu("Extensions>Cellpose", true),
+                            new Action(command, e -> openScript(qupath, script)));
+                }
+            } catch (Exception e) {
+                logger.error(e.getLocalizedMessage(), e);
+            }
+        });
         // Get a copy of the cellpose options
         CellposeSetup options = CellposeSetup.getInstance();
 
@@ -65,4 +96,12 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         return QuPathExtension.super.getQuPathVersion();
     }
 
+    private static void openScript(QuPathGUI qupath, String script) {
+        var editor = qupath.getScriptEditor();
+        if (editor == null) {
+            logger.error("No script editor is available!");
+            return;
+        }
+        qupath.getScriptEditor().showScript("StarDist detection", script);
+    }
 }
