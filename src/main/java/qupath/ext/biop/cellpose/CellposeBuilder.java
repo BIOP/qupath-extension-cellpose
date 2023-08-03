@@ -61,16 +61,7 @@ public class CellposeBuilder {
 
     private static final Logger logger = LoggerFactory.getLogger(CellposeBuilder.class);
     private final transient CellposeSetup cellposeSetup;
-    private final Double probaThreshold = 0.0;
-    private final Double flowThreshold = 0.0;
-    private final Double diameter = 0.0;
-    private final File trainDirectory = null;
-    private final File valDirectory = null;
-    private final Integer nEpochs = null;
-    private final Integer batchSize = null;
-    private final Double learningRate = Double.NaN;
-    private final Integer minTrainMasks = null;
-    private final List<ImageOp> ops = new ArrayList<>();
+
     private final List<ImageOp> preprocessing = new ArrayList<>();
     private final LinkedHashMap<String, String> cellposeParameters = new LinkedHashMap<>();
     // Cellpose Related Options
@@ -95,9 +86,11 @@ public class CellposeBuilder {
     private transient String builderName;
     private Integer overlap = null;
     private double simplifyDistance = 1.4;
-    private Map<Integer, PathClass> classifications;
     private TileOpCreator globalPreprocessing;
     private int nThreads = -1;
+
+    private File tempDirectory = null;
+    private File groundTruthDirectory = null;
 
 
     /**
@@ -132,6 +125,22 @@ public class CellposeBuilder {
         // Need to know setup options in order to guide the user in case of version inconsistency
         this.cellposeSetup = CellposeSetup.getInstance();
 
+    }
+
+    /**
+     * Specify the training directory
+     */
+    public CellposeBuilder groundTruthDirectory(File groundTruthDirectory) {
+        this.groundTruthDirectory = groundTruthDirectory;
+        return this;
+    }
+
+    /**
+     * Specify the temporary directory
+     */
+    public CellposeBuilder tempDirectory(File trainingDirectory) {
+        this.tempDirectory = trainingDirectory;
+        return this;
     }
 
     /**
@@ -759,14 +768,24 @@ public class CellposeBuilder {
 
         // Pick up info on project location and where the data will be stored for training and inference
         File quPathProjectDir = QP.getProject().getPath().getParent().toFile();
+
+        // Prepare temp directory in case it was not set
+        if (this.tempDirectory == null) {
+            this.tempDirectory = new File(quPathProjectDir, "cellpose-temp");
+        }
+        tempDirectory.mkdirs();
+
+        // Prepare training directory in case it was not set
+        if (this.groundTruthDirectory == null) {
+            this.groundTruthDirectory = new File(quPathProjectDir, "cellpose-training");
+        }
+
         if (this.modelDirectory == null) {
             this.modelDirectory = new File(quPathProjectDir, "models");
         }
-
         modelDirectory.mkdirs();
 
         // Define training and validation directories inside the QuPath Project
-        File groundTruthDirectory = new File(quPathProjectDir, "cellpose-training");
         File trainDirectory = new File(groundTruthDirectory, "train");
         File valDirectory = new File(groundTruthDirectory, "test");
         trainDirectory.mkdirs();
@@ -775,6 +794,7 @@ public class CellposeBuilder {
         cellpose.modelDirectory = modelDirectory;
         cellpose.trainDirectory = trainDirectory;
         cellpose.valDirectory = valDirectory;
+        cellpose.tempDirectory = tempDirectory;
 
 
         if (this.channels.length > 2) {
