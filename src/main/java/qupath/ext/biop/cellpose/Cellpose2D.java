@@ -58,15 +58,12 @@ import qupath.lib.objects.PathCellObject;
 import qupath.lib.objects.PathObject;
 import qupath.lib.objects.PathObjects;
 import qupath.lib.objects.classes.PathClass;
-import qupath.lib.objects.classes.PathClassFactory;
 import qupath.lib.projects.Project;
-import qupath.lib.projects.Projects;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.GeometryTools;
 import qupath.lib.roi.RoiTools;
 import qupath.lib.roi.interfaces.ROI;
-import qupath.lib.scripting.QP;
 import qupath.opencv.ops.ImageDataOp;
 import qupath.opencv.ops.ImageDataServer;
 import qupath.opencv.ops.ImageOp;
@@ -204,7 +201,7 @@ public class Cellpose2D {
      * <p>
      * Note that currently this requires downsampling the image to a manageable size.
      *
-     * @return
+     * @return a builder for a normalization op
      */
     public static OpCreators.ImageNormalizationBuilder imageNormalizationBuilder() {
         return new OpCreators.ImageNormalizationBuilder();
@@ -243,16 +240,16 @@ public class Cellpose2D {
             var overlaps = (List<Geometry>) tree.query(envelope);
 
             // Remove the overlaps that we can be sure don't apply using quick tests, to avoid expensive ones
-            var iter = overlaps.iterator();
-            while (iter.hasNext()) {
-                var cell2 = iter.next();
+            var iterator = overlaps.iterator();
+            while (iterator.hasNext()) {
+                var cell2 = iterator.next();
                 if (cell2 == cell || skippedObjects.contains(cell2) || objects.contains(cell2))
-                    iter.remove();
+                    iterator.remove();
                 else {
                     // Envelope text needed because nuclei can have been modified
                     var env = envelopes.computeIfAbsent(cell2, g -> g.getEnvelopeInternal());
                     if (!envelope.intersects(env))
-                        iter.remove();
+                        iterator.remove();
                 }
             }
 
@@ -264,7 +261,7 @@ public class Cellpose2D {
             for (var cell2 : overlaps) {
                 // If we have an overlap, retain the largest object (i.e. the one we met first)
                 try {
-                    boolean checkDifference = true;
+                    boolean checkDifference;
                     if (prepared == null) {
                         // We could check for intersection, but it seems faster to just compute difference
                         // (this would warrant some more systematic checking though)
@@ -343,7 +340,7 @@ public class Cellpose2D {
     /**
      * Optionally submit runnable to a thread pool. This limits the parallelization used by parallel streams.
      *
-     * @param runnable
+     * @param runnable The runnable to submit
      */
     private void runInPool(Runnable runnable) {
         if (nThreads > 0) {
@@ -371,7 +368,7 @@ public class Cellpose2D {
     /**
      * The directory that was used for saving the training images
      *
-     * @return
+     * @return the directory
      */
     public File getTrainingDirectory() {
         return trainDirectory;
@@ -380,7 +377,7 @@ public class Cellpose2D {
     /**
      * The directory that was used for saving the validation images
      *
-     * @return
+     * @return the directory
      */
     public File getValidationDirectory() {
         return valDirectory;
@@ -458,25 +455,10 @@ public class Cellpose2D {
                     opServer.getDownsampleForResolution(0),
                     parent.getROI());
 
-            // Get all the required tiles that intersect with the mask ROI
-            Geometry mask = parent.getROI().getGeometry();
-
-            /*
-            // This is the StarDist way, but it makes overly large tiles
-            List<TileRequest> tiles = opServer.getTileRequestManager().getTileRequests(request)
-                    .stream()
-                    .filter(t -> mask == null || mask.intersects(GeometryTools.createRectangle(t.getImageX(), t.getImageY(), t.getImageWidth(), t.getImageHeight())))
-                    .collect(Collectors.toList());
-            */
 
             Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileWidth * finalDownsample)), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileHeight * finalDownsample)), true, (int) (overlap * finalDownsample));
 
-            List<RegionRequest> tiles = rois.stream().map(r -> {
-                return RegionRequest.createInstance(opServer.getPath(), opServer.getDownsampleForResolution(0), r);
-            }).collect(Collectors.toList());
-
-            // Detect all potential nuclei
-            ImagePlane plane = request.getImagePlane();
+            List<RegionRequest> tiles = rois.stream().map(r -> RegionRequest.createInstance(opServer.getPath(), opServer.getDownsampleForResolution(0), r)).collect(Collectors.toList());
 
             // Compute op with preprocessing
             ArrayList<ImageOp> fullPreprocess = new ArrayList<ImageOp>();
@@ -511,17 +493,6 @@ public class Cellpose2D {
             // Save each tile to an image and keep a reference to it
             var individualTiles = tiles.parallelStream()
                     .map(t -> {
-                        // Make a new RegionRequest with the requested padding
-                        // Create a padded request, if we need one
-                        /*
-                        // This is the StarDist way
-                        RegionRequest requestPadded = t.getRegionRequest();
-                            int x1 = Math.max(0, Math.round(t.getRegionRequest().getX() - finalDownsample * overlap));
-                            int y1 = Math.max(0, Math.round(t.getRegionRequest().getY() - finalDownsample * overlap));
-                            int x2 = (int)Math.min(server.getWidth(), Math.round(t.getRegionRequest().getMaxX() + finalDownsample * overlap));
-                            int y2 = (int)Math.min(server.getHeight(), Math.round(t.getRegionRequest().getMaxY() + finalDownsample * overlap));
-                            requestPadded = RegionRequest.createInstance(server.getPath(), finalDownsample, x1, y1, x2-x1, y2-y1, t.getRegionRequest().getZ(), t.getRegionRequest().getT());
-                        */
                         try {
                             RegionRequest requestPadded = t;
                             return saveTileImage(opWithPreprocessing, imageData, requestPadded);
@@ -568,7 +539,7 @@ public class Cellpose2D {
                 }
             });
 
-            //Remove candidates that are not within the parent objecs
+            //Remove candidates that are not within the parent objects
             // Filter Detections: Remove overlaps
             List<CandidateObject> filteredDetections = filterDetections(allCandidates);
 
@@ -661,7 +632,7 @@ public class Cellpose2D {
             }
             geomCell = simplify(geomCell);
 
-            // Intersection with complex mask could give linestrings - which we want to remove
+            // Intersection with complex mask could give rise to linestring(s) - which we want to remove
             geomCell = GeometryTools.ensurePolygonal(geomCell);
 
             if (geomCell.isEmpty()) {
@@ -778,28 +749,6 @@ public class Cellpose2D {
                     skippedObjects.add(overlappingCandidate);
                     skipErrorCount++;
                 }
-/*
-                // If we have an overlap, retain the larger object only
-                try {
-                    var env = envelopes.get(nuc2);
-                    //iou
-                    Geometry intersection = detection.getROI().getGeometry().intersection(nuc2.getROI().getGeometry());
-                    Geometry union = detection.getROI().getGeometry().union(nuc2.getROI().getGeometry());
-                    double iou = intersection.getArea() / union.getArea();
-
-                    // If the intersection area is close to that of nuc2, then nuc2 is almost contained inside the first object
-                    // CAREFUL, as this uses already simplified shapes, the result will be different with and without simplifications
-                    if (envelope.intersects(env) && detection.getROI().getGeometry().intersects(nuc2.getROI().getGeometry())) {
-                        if (iou > this.iouThreshold || intersection.getArea() / nuc2.getROI().getGeometry().getArea() > 0.9) {
-                            skippedDetections.add(nuc2);
-                        }
-                    }
-                } catch (Exception e) {
-                    skippedDetections.add(nuc2);
-                    skipErrorCount++;
-                }
-
-*/
 
             }
         }
@@ -1209,9 +1158,7 @@ public class Cellpose2D {
      * @return
      */
     private File getQCFolder() {
-        File projectFolder = QP.getProject().getPath().getParent().toFile();
-        File qcFolder = new File(projectFolder, "QC");
-        return qcFolder;
+        return new File(this.modelDirectory, "QC");
     }
 
     /**
@@ -1271,10 +1218,11 @@ public class Cellpose2D {
 
                 Collection<PathObject> allAnnotations = imageData.getHierarchy().getAnnotationObjects();
                 // Get Squares for Training, Validation and Testing
-                List<PathObject> trainingAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Training")).collect(Collectors.toList());
-                List<PathObject> validationAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Validation")).collect(Collectors.toList());
+                List<PathObject> trainingAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClass.getInstance("Training")).collect(Collectors.toList());
+                List<PathObject> validationAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClass.getInstance("Validation")).collect(Collectors.toList());
 
-                List<PathObject> testingAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClassFactory.getPathClass("Test")).collect(Collectors.toList());
+                // TODO add test annotations too
+                //List<PathObject> testingAnnotations = allAnnotations.stream().filter(a -> a.getPathClass() == PathClass.getInstance("Test")).collect(Collectors.toList());
 
                 PixelCalibration resolution = imageData.getServer().getPixelCalibration();
                 if (Double.isFinite(pixelSize) && pixelSize > 0) {
@@ -1287,7 +1235,7 @@ public class Cellpose2D {
                 if (!trainingAnnotations.isEmpty() || !validationAnnotations.isEmpty()) {
                     // Make the server using the required ops
                     // Do global preprocessing calculations, if required
-                    ArrayList<ImageOp> fullPreprocess = new ArrayList<ImageOp>();
+                    ArrayList<ImageOp> fullPreprocess = new ArrayList<>();
                     fullPreprocess.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
                     if (globalPreprocess != null) {
                         try {
