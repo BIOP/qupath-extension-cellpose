@@ -52,7 +52,7 @@ mamba env create -f cellpose-omnipose-biop-gpu.yml
 We will need this information later when configuring the QuPath Cellpose extension.
 
 ```
-mamba activa te cellpose-omnipose-biop-gpu
+mamba activate cellpose-omnipose-biop-gpu
 where python
 F:\conda-envs\cellpose-omnipose-biop-gpu\python.exe
 ```
@@ -78,7 +78,7 @@ You might then need to restart QuPath (but not your computer).
 ## QuPath Extension Cellpose/Omnipose: First time setup
 
 Go to `Edit > Preferences > Cellpose/Omnipose`
-Complete the fields with the requested information. based on the `conda` installation above, this is what it should look like:
+Complete the fields with the requested information. based on the `mamba` installation above, this is what it should look like:
 ![Cellpose setup example](files/cellpose-qupath-setup-example.png)
 > **Note**
 You have the possibility to provide **two** different environments. One for Cellpose and one for Omnipose. 
@@ -120,50 +120,10 @@ Here are some reasons we do it this way:
 3. Draw your ground truth. You can also run cellpose with `createAnnotations()` in the builder to have a starting ground truth you can manually correct. 
 4. The drawn ground truth annotations must have **no classes**.
 
-After you have saved the project, you can run the Cellpose training in the following way:
+After you have saved the project, you can run the Cellpose training template script in 
+`Extensions > Cellpose > Cellpose training script template`
 
-```groovy
-import qupath.ext.biop.cellpose.Cellpose2D
-
-def cellpose = Cellpose2D.builder("cyto") // Can choose "None" if you want to train from scratch
-                .channels("DAPI", "CY3")  // or use work with .cellposeChannels( channel1, channel2 ) and follow the cellpose way
-//                .preprocess(ImageOps.Filters.gaussianBlur(1)) // Optional preprocessing QuPath Ops 
-//                .epochs(500)             // Optional: will default to 500
-//                .learningRate(0.2)       // Optional: Will default to 0.2
-//                .batchSize(8)            // Optional: Will default to 8
-//                .minTrainMasks(5)        // Optional: Will default to 5
-//                .addParameter("save_flows")      // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
-//                .addParameter("anisotropy", "3") // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
-//                .modelDirectory( new File("My/folder/for/models")) // Optional place to store resulting model. Will default to QuPath project root, and make a 'models' folder
-//                .saveBuilder("My Builder") // Optional: Will save a builder json file that can be reloaded with Cellpose2D.builder(File builderFile)
-                .build()
-
-// Once ready for training you can call the train() method
-// train() will:
-// 1. Go through the current project and save all "Training" and "Validation" regions into a temp folder (inside the current project)
-// 2. Run the cellpose training via command line
-// 3. Recover the model file after training, and copy it to where you defined in the builder, returning the reference to it
-// 4. If it detects the run-cellpose-qc.py file in your QuPath Extensions Folder, it will run validation for this model
-
-def resultModel = cellpose.train()
-
-// Pick up results to see how the training was performed
-println "Model Saved under "
-println resultModel.getAbsolutePath().toString()
-
-// You can get a ResultsTable of the training. 
-def results = cellpose.getTrainingResults()
-results.show("Training Results")
-
-// You can get a results table with the QC results to visualize 
-def qcResults = cellpose.getQCResults()
-qcResults.show("QC Results")
-
-
-// Finally you have access to a very simple graph 
-cellpose.showTrainingGraph()
-```
-
+Or you can download [Cellpose_training_template.groovy](src/main/resources/scripts/Cellpose_training_template.groovy) from this repo and run it from the script editor.
 
 ### More training options
 [All options in Cellpose](https://github.com/MouseLand/cellpose/blob/45f1a3c640efb8ca7d252712620af6f58d024c55/cellpose/__main__.py#L36) 
@@ -195,6 +155,13 @@ our current guidelines:
 
 Running Cellpose is done via a script and is very similar to the excellent [QuPath StarDist Extension](https://github.com/qupath/qupath-extension-stardist)
 
+You can find a template in QuPath in
+
+`Extensions > Cellpose > Cellpose training script template`
+
+Or you can download the [Cellpose_detection_template.groovy](src/main/resources/scripts/Cellpose_detection_template.groovy) script from this repo and place it in the script editor
+
+
 All builder options that are implemented are [in the Javadoc](https://biop.github.io/qupath-extension-cellpose/)
 
 ### Breaking changes after QuPath 0.4.0
@@ -202,48 +169,9 @@ In order to make the extension more flexible and less dependent on the builder, 
 For this to work, some elements that were "hard coded" on the builder have been removed, so you will get some errors. For example: `excludeEdges()` and `clusterDBSCAN()` no longer exist. 
 You can use `addParameter("exclude_on_edges")`, and `addParameter("cluster")` instead.
 
-```groovy
-import qupath.ext.biop.cellpose.Cellpose2D
-// For all the options from cellpose: https://cellpose.readthedocs.io/en/latest/cli.html
-// For all the options from omnipose: https://omnipose.readthedocs.io/command.html#all-options
-
-// Specify the model name (cyto, nuc, cyto2, omni_bact or a path to your custom model)
-def pathModel = 'cyto2'
-def cellpose = Cellpose2D.builder( pathModel )
-        .pixelSize( 0.5 )                  // Resolution for detection in um
-        .channels( 'DAPI' )	               // Select detection channel(s)
-//        .preprocess( ImageOps.Filters.median(1) )                // List of preprocessing ImageOps to run on the images before exporting them
-//        .normalizePercentilesGlobal(0.1, 99.8, 10) // Convenience global percentile normalization. arguments are percentileMin, percentileMax, dowsample.
-//        .tileSize(1024)                  // If your GPU can take it, make larger tiles to process fewer of them. Useful for Omnipose
-//        .cellposeChannels(1,2)           // Overwrites the logic of this plugin with these two values. These will be sent directly to --chan and --chan2
-//        .cellprobThreshold(0.0)          // Threshold for the mask detection, defaults to 0.0
-//        .flowThreshold(0.4)              // Threshold for the flows, defaults to 0.4 
-//        .diameter(15)                    // Median object diameter. Set to 0.0 for the `bact_omni` model or for automatic computation
-//        .useOmnipose()                   // Use the omnipose instead
-//        .addParameter("cluster")         // Any parameter from cellpose or omnipose not available in the builder. 
-//        .addParameter("save_flows")      // Any parameter from cellpose or omnipose not available in the builder.
-//        .addParameter("anisotropy", "3") // Any parameter from cellpose or omnipose not available in the builder.
-//        .cellExpansion(5.0)              // Approximate cells based upon nucleus expansion
-//        .cellConstrainScale(1.5)         // Constrain cell expansion using nucleus size
-//        .classify("My Detections")       // PathClass to give newly created objects
-//        .measureShape()                  // Add shape measurements
-//        .measureIntensity()              // Add cell measurements (in all compartments)  
-//        .createAnnotations()             // Make annotations instead of detections. This ignores cellExpansion
-//        .simplify(0)                     // Simplification 1.6 by default, set to 0 to get the cellpose masks as precisely as possible
-        .build()
-
-// Run detection for the selected objects
-def imageData = getCurrentImageData()
-def pathObjects = getSelectedObjects()
-if (pathObjects.isEmpty()) {
-    Dialogs.showErrorMessage("Cellpose", "Please select a parent object!")
-    return
-}
-cellpose.detectObjects(imageData, pathObjects)
-println 'Done!'
-```
-
 # Citing
+
+Please cite this extension by linking it to this GitHub or to the release you used, and feel free to give us a star ⭐️
 
 If you use this extension, you should cite the following publications
 
@@ -255,6 +183,7 @@ Cutler, K.J., Stringer, C., Lo, T.W. et al. **Omnipose: a high-precision morphol
 
 Bankhead, P. et al. **QuPath: Open source software for digital pathology image analysis**. Scientific Reports (2017).
 https://doi.org/10.1038/s41598-017-17204-5
+
 
 # Building
 
