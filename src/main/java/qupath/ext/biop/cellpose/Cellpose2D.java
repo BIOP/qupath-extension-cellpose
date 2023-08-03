@@ -1345,7 +1345,7 @@ public class Cellpose2D {
             logger.info("Found model file at {} ", model);
             File newModel = new File(modelDirectory, model.getName());
             FileUtils.copyFile(model, newModel);
-            logger.info("Model file {} moved to {}", newModel.getName(), newModel.getParent());
+            logger.info("Model file {} moved to {}", newModel.getName(), newModel.getParent().replace('\\', '/'));
             return newModel;
         }
         return null;
