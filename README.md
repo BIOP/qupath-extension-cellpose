@@ -212,6 +212,13 @@ def stains = getCurrentImageData().getColorDeconvolutionStains()
              ImageOps.Channels.extract(0, 1) ) // 0 for HTX and 1 for DAB
 . cellposeChannels(2, 1)                       // Use the second channel from the extracted image for the cytoplasm and the first channel for the nucleus in cellpose
 ```
+## `Warn: No compatible writer found`
+So far we experienced the `No compatible writer found` issue in the following cases:
+
+1. The channel names were incorrect in the builder, so the image writer could not find the requested channels
+2. The rectangles were too close or beyond the edges of the image, so there were no pixels to export
+3. There were special characters in the file name, which caused it to fail.
+
 ## Overlap
 
 In case you end up with split detections, this is caused by the overlap calculation not being done correctly or by setting the `.diameter()` to 0 in order for cellpose to determine it automatically.
