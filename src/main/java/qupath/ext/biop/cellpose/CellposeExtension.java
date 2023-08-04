@@ -12,6 +12,7 @@ import qupath.lib.gui.panes.PreferencePane;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.gui.tools.MenuTools;
 
+import java.io.InputStream;
 import java.util.Map;
 
 
@@ -44,10 +45,10 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
             return;
 
         SCRIPTS.entrySet().forEach(entry -> {
-            var name = entry.getValue();
-            var command = entry.getKey();
-            try (var stream = CellposeExtension.class.getClassLoader().getResourceAsStream(name)) {
-                var script = new String(stream.readAllBytes(), "UTF-8");
+            String name = entry.getValue();
+            String command = entry.getKey();
+            try (InputStream stream = CellposeExtension.class.getClassLoader().getResourceAsStream(name)) {
+                String script = new String(stream.readAllBytes(), "UTF-8");
                 if (script != null) {
                     MenuTools.addMenuItems(
                             qupath.getMenu("Extensions>Cellpose", true),
