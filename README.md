@@ -18,25 +18,6 @@ they can play nice.
 
 ## Step 1: Install Cellpose and Omnipose
 
-Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose). And
-Omnipose from [the main Omnipose repository](https://omnipose.readthedocs.io/installation.html)
-This extension will need to know the path to at least your Cellpose environment. If you plan on using Omnipose, you will also need to install it. 
-
-### NOTE: `scikit-image` Dependency
-As of version 0.4 of this extension, QC (quality control) is run **automatically** when training a model.
-
-Due to the dependencies of the validation code, located inside [run-cellpose-qc.py](QC/run-cellpose-qc.py) requires an 
-extra dependency on `scikit-image`.
-
-The simplest way to add it, is when installing Cellpose as instructed in the official repository and adding scikit-image
-```bash
-python -m pip install cellpose scikit-image
-```
-or
-```bash
-python -m pip install omnipose scikit-image
-```
-
 ## Installation with Conda/Mamba
 We provide the following YAML file that installs Cellpose and omnipose in the same environment.
 The configuration files are without guarantee, but these are the ones we use for our Windows machines.
@@ -47,6 +28,21 @@ You can create the environment with the following command using either conda or 
 ```bash
 mamba env create -f cellpose-omnipose-biop-gpu.yml
 ```
+## Installation from the official Cellpose documentation
+Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose). And
+Omnipose from [the main Omnipose repository](https://omnipose.readthedocs.io/installation.html)
+This extension will need to know the path to at least your Cellpose environment. If you plan on using Omnipose, you will also need to install it. 
+
+> **Note**
+> ### `scikit-image` Dependency
+> As of version 0.4 of this extension, QC (quality control) is run **automatically** when training a model.
+> Due to the dependencies of the validation code located inside [run-cellpose-qc.py](QC/run-cellpose-qc.py) there is an extra dependency: `scikit-image`.
+> 
+> The simplest way to add it, is when installing Cellpose as instructed in the official repository and adding scikit-image
+> `python -m pip install cellpose scikit-image`
+> or
+> `python -m pip install omnipose scikit-image`
+
 
 ### Check the path to the Python executable
 We will need this information later when configuring the QuPath Cellpose extension.
