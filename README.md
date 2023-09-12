@@ -165,7 +165,7 @@ Or you can download the [Cellpose_detection_template.groovy](src/main/resources/
 All builder options that are implemented are [in the Javadoc](https://biop.github.io/qupath-extension-cellpose/)
 
 ### Prediction using custom models
-All you need to to to use your model is to provide the path to the CellposeBuilder
+All you need to use your model is to provide the path to the CellposeBuilder
 ```
 // Specify the model name (cyto, nuc, cyto2, omni_bact or a path to your custom model as a string)
 def pathModel = 'C:/cellpose-custom-models/cellpose_residual_on_style_on_concatenation_off_train_2023_07_26_11_31_47.433625'
