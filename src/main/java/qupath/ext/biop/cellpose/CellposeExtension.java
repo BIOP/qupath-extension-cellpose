@@ -103,6 +103,6 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
             logger.error("No script editor is available!");
             return;
         }
-        qupath.getScriptEditor().showScript("StarDist detection", script);
+        qupath.getScriptEditor().showScript("Cellpose detection", script);
     }
 }
