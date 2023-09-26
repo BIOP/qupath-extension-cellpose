@@ -1198,6 +1198,7 @@ public class Cellpose2D {
 
             } catch (IOException ex) {
                 logger.error(ex.getMessage());
+                logger.error("Troubleshooting:\n - Check that the channel names are correct in the builder.");
             }
         });
     }
