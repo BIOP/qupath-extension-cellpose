@@ -15,6 +15,7 @@ import qupath.lib.gui.panes.PreferencePane;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.gui.tools.MenuTools;
 import java.io.InputStream;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 
@@ -31,10 +32,10 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
     private boolean isInstalled = false;
 
-    private static final Map<String, String> SCRIPTS = Map.of(
-            "Cellpose training script template", "scripts/Cellpose_training_template.groovy",
-            "Cellpose detection script template", "scripts/Cellpose_detection_template.groovy"
-    );
+    private static final LinkedHashMap<String, String> SCRIPTS = new LinkedHashMap<>(){{
+        put("Cellpose training script template", "scripts/Cellpose_training_template.groovy");
+        put("Cellpose detection script template", "scripts/Cellpose_detection_template.groovy");
+    }};
 
     @Override
     public GitHubRepo getRepository() {
