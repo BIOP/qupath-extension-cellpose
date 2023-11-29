@@ -1,9 +1,12 @@
 package qupath.ext.biop.cellpose;
 
 import javafx.beans.property.StringProperty;
+import org.controlsfx.control.PropertySheet;
 import org.controlsfx.control.action.Action;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.fx.prefs.controlsfx.PropertyItemBuilder;
+import qupath.lib.common.Prefs;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.extensions.GitHubProject;
@@ -11,7 +14,6 @@ import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.gui.panes.PreferencePane;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.gui.tools.MenuTools;
-
 import java.io.InputStream;
 import java.util.Map;
 
@@ -61,9 +63,11 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         // Get a copy of the cellpose options
         CellposeSetup options = CellposeSetup.getInstance();
 
+
         // Create the options we need
         StringProperty cellposePath = PathPrefs.createPersistentPreference("cellposePythonPath", "");
         StringProperty omniposePath = PathPrefs.createPersistentPreference("omniposePythonPath", "");
+
 
         //Set options to current values
         options.setCellposePytonPath(cellposePath.get());
@@ -73,13 +77,23 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         cellposePath.addListener((v, o, n) -> options.setCellposePytonPath(n));
         omniposePath.addListener((v, o, n) -> options.setOmniposePytonPath(n));
 
-        // Add Permanent Preferences and Populate Preferences
-        PreferencePane prefs = QuPathGUI.getInstance().getPreferencePane();
+        PropertySheet.Item cellposePathItem = new PropertyItemBuilder<>(cellposePath, String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
+                .name("Cellpose 'python.exe' location")
+                .category("Cellpose/Omnipose")
+                .description("Enter the full path to your cellpose environment, including 'python.exe'")
+                .build();
 
-        prefs.addPropertyPreference(cellposePath, String.class, "Cellpose 'python.exe' location", "Cellpose/Omnipose",
-                "Enter the full path to your cellpose environment, including 'python.exe'");
-        prefs.addPropertyPreference(omniposePath, String.class, "Omnipose 'python.exe location (Optional)", "Cellpose/Omnipose",
-                "Enter the full path to your omnipose environment, including 'python.exe'");
+        PropertySheet.Item omniposePathItem = new PropertyItemBuilder<>(omniposePath, String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
+                .name("Omnipose 'python.exe' location")
+                .category("Cellpose/Omnipose")
+                .description("Enter the full path to your omnipose environment, including 'python.exe'")
+                .build();
+
+        // Add Permanent Preferences and Populate Preferences
+        QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems().addAll(cellposePathItem, omniposePathItem);
+
     }
 
     @Override
