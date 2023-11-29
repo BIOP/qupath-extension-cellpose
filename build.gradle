@@ -24,16 +24,15 @@ ext.qupathVersion = gradle.ext.qupathVersion
 
 description = 'QuPath extension to use Cellpose'
 
-version = "0.8.0"
+version = "0.9.0-SNAPSHOT"
 
 dependencies {
     implementation "io.github.qupath:qupath-gui-fx:${qupathVersion}"
-    implementation "commons-io:commons-io:2.11.0"
+    implementation "commons-io:commons-io:2.15.0"
     implementation libs.bundles.logging
 
     testImplementation libs.junit
     testRuntimeOnly libs.junit.engine
-
 }
 
 processResources {
@@ -55,7 +54,7 @@ tasks.register("copyDependencies", Copy) {
  */
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(11)
+        languageVersion = JavaLanguageVersion.of(17)
     }
     if (project.properties['sources'])
         withSourcesJar()
