@@ -27,7 +27,7 @@ ext.qupathVersion = gradle.ext.qupathVersion
 
 description = 'QuPath extension to use Cellpose'
 
-version = "0.9.0-SNAPSHOT"
+version = "0.9.0"
 
 dependencies {
     shadow "io.github.qupath:qupath-gui-fx:${qupathVersion}"
