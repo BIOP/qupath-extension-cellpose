@@ -6,18 +6,15 @@ import org.controlsfx.control.action.Action;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.fx.prefs.controlsfx.PropertyItemBuilder;
-import qupath.lib.common.Prefs;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.extensions.GitHubProject;
 import qupath.lib.gui.extensions.QuPathExtension;
-import qupath.lib.gui.panes.PreferencePane;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.gui.tools.MenuTools;
+
 import java.io.InputStream;
 import java.util.LinkedHashMap;
-import java.util.Map;
-
 
 /**
  * Install Cellpose as an extension.
@@ -32,7 +29,7 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
     private boolean isInstalled = false;
 
-    private static final LinkedHashMap<String, String> SCRIPTS = new LinkedHashMap<>(){{
+    private static final LinkedHashMap<String, String> SCRIPTS = new LinkedHashMap<>() {{
         put("Cellpose training script template", "scripts/Cellpose_training_template.groovy");
         put("Cellpose detection script template", "scripts/Cellpose_detection_template.groovy");
     }};
@@ -44,7 +41,7 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
     @Override
     public void installExtension(QuPathGUI qupath) {
-        if(isInstalled)
+        if (isInstalled)
             return;
 
         SCRIPTS.entrySet().forEach(entry -> {

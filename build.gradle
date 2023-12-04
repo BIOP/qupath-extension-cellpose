@@ -34,9 +34,6 @@ dependencies {
     shadow libs.qupath.fxtras
     implementation "commons-io:commons-io:2.15.0"
     implementation libs.bundles.logging
-
-    testImplementation libs.junit
-    testRuntimeOnly libs.junit.engine
 }
 
 processResources {
