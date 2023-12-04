@@ -92,6 +92,7 @@ public class CellposeBuilder {
     private File tempDirectory = null;
     private File groundTruthDirectory = null;
 
+    private ImageOp extendChannelOp = null;
 
     /**
      * can create a cellpose builder from a serialized JSON version of this builder.
@@ -112,6 +113,10 @@ public class CellposeBuilder {
         }
     }
 
+    public CellposeBuilder extendChannelOp(ImageOp extendChannelOp) {
+        this.extendChannelOp = extendChannelOp;
+        return this;
+    }
     /**
      * Build a cellpose model by providing a string which can be the name of a pretrained model or a path to a custom model
      *
@@ -126,6 +131,7 @@ public class CellposeBuilder {
         this.cellposeSetup = CellposeSetup.getInstance();
 
     }
+
 
     /**
      * Specify the training directory
@@ -795,6 +801,8 @@ public class CellposeBuilder {
         cellpose.trainDirectory = trainDirectory;
         cellpose.valDirectory = valDirectory;
         cellpose.tempDirectory = tempDirectory;
+
+        cellpose.extendChannelOp = extendChannelOp;
 
 
         if (this.channels.length > 2) {

@@ -32,13 +32,13 @@ import org.bytedeco.opencv.opencv_core.Mat;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryCollection;
-import org.locationtech.jts.geom.prep.PreparedGeometry;
-import org.locationtech.jts.geom.prep.PreparedGeometryFactory;
 import org.locationtech.jts.index.strtree.STRtree;
 import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.biop.cmd.VirtualEnvironmentRunner;
+import qupath.fx.dialogs.Dialogs;
+import qupath.fx.utils.FXUtils;
 import qupath.lib.analysis.features.ObjectMeasurements;
 import qupath.lib.analysis.images.ContourTracing;
 import qupath.lib.analysis.images.SimpleImage;
@@ -46,10 +46,8 @@ import qupath.lib.analysis.images.SimpleImages;
 import qupath.lib.common.ColorTools;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.geom.ImmutableDimension;
-import qupath.lib.gui.QuPathGUI;
-import qupath.lib.gui.dialogs.Dialogs;
+import qupath.lib.gui.ExtensionClassLoader;
 import qupath.lib.gui.scripting.QPEx;
-import qupath.lib.gui.tools.GuiTools;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.*;
 import qupath.lib.images.writers.ImageWriterTools;
@@ -89,7 +87,7 @@ import java.util.stream.Collectors;
  * <pre>
  * Stringer, C., Wang, T., Michaelos, M. et al.
  *     "Cellpose: a generalist algorithm for cellular segmentation"
- *     <i>Nat Methods 18, 100–106 (2021). https://doi.org/10.1038/s41592-020-01018-x</i>
+ *     <i>Nat Methods 18, 100–106 (2021). <a href="https://doi.org/10.1038/s41592-020-01018-x">doi.org/10.1038/s41592-020-01018-x</a></i>
  * </pre>
  * And
  * <pre>
@@ -97,10 +95,10 @@ import java.util.stream.Collectors;
  *     "Omnipose: a high-precision morphology-independent solution for bacterial cell segmentation"
  *     <i>Nat Methods 19, 1438–1448 (2022). https://doi.org/10.1038/s41592-022-01639-4</i>
  * </pre>
- * See the main repos at https://github.com/mouseland/cellpose and https://github.com/kevinjohncutler/omnipose
+ * See the main repos at <a href="https://github.com/mouseland/cellpose">https://github.com/mouseland/cellpose</a> and <a href="https://github.com/kevinjohncutler/omnipose">https://github.com/kevinjohncutler/omnipose</a>
  *
  * <p>
- * The structure of this extension was adapted from the qupath-stardist-extension at https://github.com/qupath/qupath-extension-stardist
+ * The structure of this extension was adapted from the qupath-stardist-extension at <a href="https://github.com/qupath/qupath-extension-stardist">https://github.com/qupath/qupath-extension-stardist</a>
  * This way the Cellpose builder mirrors the StarDist2D builder, which should allow users familiar with the StarDist extension to use this one.
  * <p>
  *
@@ -110,6 +108,8 @@ import java.util.stream.Collectors;
 public class Cellpose2D {
 
     private final static Logger logger = LoggerFactory.getLogger(Cellpose2D.class);
+
+    public ImageOp extendChannelOp;
 
     protected double simplifyDistance = 1.4;
 
@@ -207,108 +207,6 @@ public class Cellpose2D {
         return new OpCreators.ImageNormalizationBuilder();
     }
 
-    private static List<Geometry> filterObjects(List<Geometry> objectGeometry) {
-
-        // Sort in descending order of size
-        Collections.sort(objectGeometry, Comparator.comparingDouble((Geometry n) -> n.getArea()).reversed());
-
-        // Create array of nuclei to keep & to skip
-        var objects = new LinkedHashSet<Geometry>();
-        var skippedObjects = new HashSet<Geometry>();
-        int skipErrorCount = 0;
-
-        // Create a spatial cache to find overlaps more quickly
-        // (Because of later tests, we don't need to update envelopes even though geometries may be modified)
-        Map<Geometry, Envelope> envelopes = new HashMap<>();
-        var tree = new STRtree();
-        for (var cell : objectGeometry) {
-            var env = cell.getEnvelopeInternal();
-            envelopes.put(cell, env);
-            tree.insert(env, cell);
-        }
-
-        var preparingFactory = new PreparedGeometryFactory();
-
-        for (var cell : objectGeometry) {
-            if (skippedObjects.contains(cell))
-                continue;
-
-            objects.add(cell);
-            var envelope = envelopes.computeIfAbsent(cell, g -> g.getEnvelopeInternal());
-
-            @SuppressWarnings("unchecked")
-            var overlaps = (List<Geometry>) tree.query(envelope);
-
-            // Remove the overlaps that we can be sure don't apply using quick tests, to avoid expensive ones
-            var iterator = overlaps.iterator();
-            while (iterator.hasNext()) {
-                var cell2 = iterator.next();
-                if (cell2 == cell || skippedObjects.contains(cell2) || objects.contains(cell2))
-                    iterator.remove();
-                else {
-                    // Envelope text needed because nuclei can have been modified
-                    var env = envelopes.computeIfAbsent(cell2, g -> g.getEnvelopeInternal());
-                    if (!envelope.intersects(env))
-                        iterator.remove();
-                }
-            }
-
-            // If we need to compare a lot of intersections, preparing the geometry can speed things up
-            PreparedGeometry prepared = null;
-            if (overlaps.size() > 5) {
-                prepared = preparingFactory.create(cell);
-            }
-            for (var cell2 : overlaps) {
-                // If we have an overlap, retain the largest object (i.e. the one we met first)
-                try {
-                    boolean checkDifference;
-                    if (prepared == null) {
-                        // We could check for intersection, but it seems faster to just compute difference
-                        // (this would warrant some more systematic checking though)
-                        checkDifference = true;//nucleus.geometry.intersects(nucleus2.geometry);
-                    } else
-                        checkDifference = prepared.intersects(cell2);
-                    if (checkDifference) {
-                        // Retain the nucleus only if it is not fragmented, or less than half its original area
-                        var difference = cell2.difference(cell);
-
-                        if (difference instanceof GeometryCollection) {
-                            difference = GeometryTools.ensurePolygonal(difference);
-
-                            // Keep only largest polygon?
-                            double maxArea = -1;
-                            int index = -1;
-
-                            for (int i = 0; i < difference.getNumGeometries(); i++) {
-                                double area = difference.getGeometryN(i).getArea();
-                                if (area > maxArea) {
-                                    maxArea = area;
-                                    index = i;
-                                }
-                            }
-                            difference = difference.getGeometryN(index);
-                        }
-                        if (difference.getArea() > cell2.getArea() / 2.0)
-                            cell2 = difference;
-                        else {
-                            skippedObjects.add(cell2);
-                        }
-                    }
-                } catch (Exception e) {
-                    skippedObjects.add(cell2);
-                    skipErrorCount++;
-                }
-            }
-        }
-        if (skipErrorCount > 0) {
-            int skipCount = skippedObjects.size();
-            String s = skipErrorCount == 1 ? "1 nucleus" : skipErrorCount + " nuclei";
-            logger.warn("Skipped {} due to error in resolving overlaps ({}% of all skipped)",
-                    s, GeneralTools.formatNumber(skipErrorCount * 100.0 / skipCount, 1));
-        }
-        return new ArrayList<>(objects);
-    }
-
     private static PathObject objectToCell(PathObject pathObject) {
         ROI roiNucleus = null;
         var children = pathObject.getChildObjects();
@@ -351,7 +249,7 @@ public class Cellpose2D {
             // Using an outer thread poll impacts any parallel streams created inside
             var pool = new ForkJoinPool(nThreads);
             try {
-                pool.submit(() -> runnable.run());
+                pool.submit(runnable);
             } finally {
                 pool.shutdown();
                 try {
@@ -458,10 +356,10 @@ public class Cellpose2D {
 
             Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileWidth * finalDownsample)), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileHeight * finalDownsample)), true, (int) (overlap * finalDownsample));
 
-            List<RegionRequest> tiles = rois.stream().map(r -> RegionRequest.createInstance(opServer.getPath(), opServer.getDownsampleForResolution(0), r)).collect(Collectors.toList());
+            List<RegionRequest> tiles = rois.stream().map(r -> RegionRequest.createInstance(opServer.getPath(), opServer.getDownsampleForResolution(0), r)).toList();
 
             // Compute op with preprocessing
-            ArrayList<ImageOp> fullPreprocess = new ArrayList<ImageOp>();
+            ArrayList<ImageOp> fullPreprocess = new ArrayList<>();
             fullPreprocess.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
 
             // Do global preprocessing calculations, if required
@@ -494,8 +392,7 @@ public class Cellpose2D {
             var individualTiles = tiles.parallelStream()
                     .map(t -> {
                         try {
-                            RegionRequest requestPadded = t;
-                            return saveTileImage(opWithPreprocessing, imageData, requestPadded);
+                            return saveTileImage(opWithPreprocessing, imageData, t);
                         } catch (IOException e) {
                             e.printStackTrace();
                         }
@@ -503,7 +400,7 @@ public class Cellpose2D {
                     })
                     .collect(Collectors.toList());
             return new PathTile(parent, individualTiles);
-        }).collect(Collectors.toList());
+        }).toList();
 
         // Here the files are saved, and we can run cellpose.
         try {
@@ -534,8 +431,8 @@ public class Cellpose2D {
                         e.printStackTrace();
                     }
                     logger.info("Getting objects for {} Done", maskFile);
-
-                    allCandidates.addAll(candidates);
+                    if( candidates != null)
+                        allCandidates.addAll(candidates);
                 }
             });
 
@@ -685,7 +582,7 @@ public class Cellpose2D {
     private List<CandidateObject> filterDetections(Collection<CandidateObject> rawCandidates) {
 
         // Sort by size
-        List<CandidateObject> candidateList = rawCandidates.stream().collect(Collectors.toList());
+        List<CandidateObject> candidateList = new ArrayList<>(rawCandidates);
         candidateList.sort(Comparator.comparingDouble(o -> -1 * o.area));
 
         // Create array of detections to keep & to skip
@@ -771,9 +668,6 @@ public class Cellpose2D {
      */
     private TileFile saveTileImage(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request) throws IOException {
 
-        // Create a mask around pixels we can use
-        var regionMask = GeometryTools.createRectangle(request.getX(), request.getY(), request.getWidth(), request.getHeight());
-
 
         // This applies all ops to the current tile
         Mat mat;
@@ -800,11 +694,16 @@ public class Cellpose2D {
     /**
      * Selects the right folder to run from, based on whether it's cellpose or omnipose.
      * Hopefully this will become deprecated soon
-     * @return
+     * @return the virtual environment runner that can run the desired command
      */
     private VirtualEnvironmentRunner getVirtualEnvironmentRunner() {
         // Need to decide whether to call cellpose or omnipose
         VirtualEnvironmentRunner veRunner;
+
+        // Make sure that cellposeSetup.getCellposePythonPath() is not empty
+        if (cellposeSetup.getCellposePytonPath().isEmpty()) {
+            throw new IllegalStateException("Cellpose python path is empty. Please set it in Edit > Preferences");
+        }
 
         if (this.parameters.containsKey("omni") && !cellposeSetup.getOmniposePytonPath().isEmpty()) {
             veRunner = new VirtualEnvironmentRunner(cellposeSetup.getOmniposePytonPath(), VirtualEnvironmentRunner.EnvType.EXE, this.getClass().getSimpleName());
@@ -971,10 +870,9 @@ public class Cellpose2D {
     /**
      * Runs the python script "run-cellpose-qc.py", which should be in the QuPath Extensions folder
      *
-     * @return a results table with the QC statistics
      * @return the results table with the QC metrics or null
-     * @throws IOException
-     * @throws InterruptedException
+     * @throws IOException         if the python script is not found
+     * @throws InterruptedException if the running the QC fails for some reason
      */
     private ResultsTable runCellposeQC() throws IOException, InterruptedException {
 
@@ -983,7 +881,7 @@ public class Cellpose2D {
         qcFolder.mkdirs();
 
         // Let's check if the QC notebook is available in the 'extensions' folder
-        File extensionsDir = QuPathGUI.getExtensionDirectory();
+        File extensionsDir = ExtensionClassLoader.getInstance().getExtensionsDirectory().toFile();
         File qcPythonFile = new File(extensionsDir, "run-cellpose-qc.py");
 
         if (!qcPythonFile.exists()) {
@@ -1119,7 +1017,7 @@ public class Cellpose2D {
         }
         lineChart.getData().add(loss);
         lineChart.getData().add(lossTest);
-        GuiTools.runOnApplicationThread(() -> {
+        FXUtils.runOnApplicationThread(() -> {
             Dialog<ButtonType> dialog = Dialogs.builder().content(lineChart).title("Cellpose Training").buttons("Close").buttons(ButtonType.CLOSE).build();
 
             if (show) dialog.show();
@@ -1155,7 +1053,7 @@ public class Cellpose2D {
     /**
      * Get the location of the QC folder
      *
-     * @return
+     * @return the Quality Control folder
      */
     private File getQCFolder() {
         return new File(this.modelDirectory, "QC");
@@ -1198,6 +1096,7 @@ public class Cellpose2D {
 
             } catch (IOException ex) {
                 logger.error(ex.getMessage());
+                logger.error("Troubleshooting:\n - Check that the channel names are correct in the builder.");
             }
         });
     }
@@ -1211,10 +1110,29 @@ public class Cellpose2D {
 
         project.getImageList().forEach(e -> {
 
-            ImageData<BufferedImage> imageData;
+            ImageData imageData;
             try {
+
                 imageData = e.readImageData();
-                String imageName = GeneralTools.getNameWithoutExtension(imageData.getServer().getMetadata().getName());
+
+                // If there is an op for the channels, apply it and add it as an extra channel and make the new ImageData
+                if (this.extendChannelOp != null) {
+                    // Create an average channels server
+                    ImageServer<BufferedImage> avgServer = new TransformedServerBuilder(imageData.getServer()).averageChannelProject().build();
+                    ImageData avgImageData = new ImageData(avgServer, imageData.getHierarchy(), ImageData.ImageType.OTHER);
+                    // Create a filtered server channel
+                    ImageDataOp op2 = ImageOps.buildImageDataOp(ColorTransforms.createMeanChannelTransform());
+
+                    op2 = op2.appendOps(extendChannelOp);
+                    ImageServer opServer = ImageOps.buildServer( avgImageData, op2, imageData.getServer().getPixelCalibration() );
+
+                    // Combine both into a new server
+                    ImageServer combinedServer = new TransformedServerBuilder( avgServer ).concatChannels( opServer ).build();
+
+                    imageData = new ImageData<>( combinedServer, imageData.getHierarchy(), ImageData.ImageType.OTHER );
+                }
+
+                String imageName = GeneralTools.stripExtension(imageData.getServer().getMetadata().getName());
 
                 Collection<PathObject> allAnnotations = imageData.getHierarchy().getAnnotationObjects();
                 // Get Squares for Training, Validation and Testing
