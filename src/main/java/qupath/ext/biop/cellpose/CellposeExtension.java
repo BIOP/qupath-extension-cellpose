@@ -32,6 +32,8 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
     private static final LinkedHashMap<String, String> SCRIPTS = new LinkedHashMap<>() {{
         put("Cellpose training script template", "scripts/Cellpose_training_template.groovy");
         put("Cellpose detection script template", "scripts/Cellpose_detection_template.groovy");
+        put("Detect nuclei and cells using Cellpose.groovy", "scripts/Detect_nuclei_and_cells_using_Cellpose.groovy");
+        put("Create Cellpose training and validation images", "scripts/Create_Cellpose_training_and_validation_images.groovy");
     }};
 
     @Override

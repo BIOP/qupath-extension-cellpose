@@ -51,7 +51,7 @@ tasks.register("copyDependencies", Copy) {
 }
 
 /*
- * Ensure Java 11 compatibility
+ * Ensure Java 17 compatibility
  */
 java {
     toolchain {
