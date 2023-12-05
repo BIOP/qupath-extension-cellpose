@@ -310,8 +310,6 @@ def compareLabels( model_name, image_folder ):
     image_folder = Path(image_folder)
     # Grab all tif images
     raw_images = [x for x in Path(image_folder).glob("*.tif") if not ( "masks" in x.name or "flows" in x.name )]
-    gt_images = [x for x in Path(image_folder).glob("*.tif") if ( "masks" in x.name and not "cp_masks" in x.name )]
-    pred_images = [x for x in Path(image_folder).glob("*.tif") if ( "cp_masks" in x.name )]
 
     # Define save folder from the parent of the predicted_labels_folder
     results_path = image_folder / "QC-Results"
@@ -325,11 +323,19 @@ def compareLabels( model_name, image_folder ):
         writer.writerow(["model","image","Prediction v. GT Intersection over Union", "false positive", "true positive", "false negative", "precision", "recall", "accuracy", "f1 score", "n_true", "n_pred", "mean_true_score", "mean_matched_score", "panoptic_quality"])  
 
     # define the images
-        for raw, gt, pred in zip(raw_images, gt_images, pred_images):
-            print( 'Running QC on: ' + raw.name )
-            test_input = io.imread(raw)
-            test_prediction = io.imread(pred)
-            test_ground_truth_image = io.imread(gt)
+        for raw in raw_images:
+            mask_name = f"{raw.stem}_masks{raw.suffix}"
+            gt_image = raw.parent / mask_name
+            cp_mask_name = f"{raw.stem}_cp_masks{raw.suffix}"
+            pred_image = raw.parent / cp_mask_name
+            if not gt_image.is_file():
+                raise FileNotFoundError
+            if not pred_image.is_file():
+                raise FileNotFoundError
+
+            #test_input = io.imread(raw)
+            test_prediction = io.imread(pred_image)
+            test_ground_truth_image = io.imread(gt_image)
 
             # Calculate the matching (with IoU threshold `thresh`) and all metrics
 
@@ -353,4 +359,3 @@ def compareLabels( model_name, image_folder ):
 
 # Finally running the check on the given inputs
 compareLabels(model_name, data_folder)
-
