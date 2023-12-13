@@ -19,7 +19,7 @@ if (pathObjects.isEmpty()) {
 
 clearDetections()
 
-// Createa Cellpose detectors for cyto and nuclei
+// Create a Cellpose detectors for cyto and nuclei
 def pathModel_cyto = 'cyto2'
 def cellpose_cyto = Cellpose2D.builder( pathModel_cyto )
         .channels("HCS","DAPI")

@@ -17,7 +17,9 @@
  * will only run on the selected annotations.
  */
 
-// Specify the model name (cyto, nuc, cyto2, omni_bact or a path to your custom model as a string)
+// Specify the model name (cyto, nuclei, cyto2, ... or a path to your custom model as a string)
+// Other models for Cellpose https://cellpose.readthedocs.io/en/latest/models.html
+// And for Omnipose: https://omnipose.readthedocs.io/models.html
 def pathModel = 'cyto2'
 def cellpose = Cellpose2D.builder( pathModel )
         .pixelSize( 0.5 )                  // Resolution for detection in um
