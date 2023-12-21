@@ -46,6 +46,8 @@ This extension will need to know the path to at least your Cellpose environment.
 
 ### Check the path to the Python executable
 We will need this information later when configuring the QuPath Cellpose extension.
+For example, if you installed `cellpose` into an environment named `cellpose-omnipose-biop-gpu`
+then you can get the path to the Python executable as follows:
 
 ```
 mamba activate cellpose-omnipose-biop-gpu
@@ -54,7 +56,8 @@ F:\conda-envs\cellpose-omnipose-biop-gpu\python.exe
 ```
 
 > **Note**
-> While this example is done under Windows, this will work on Mac and Linux as well. 
+> While this example is done under Windows, this will work on Mac and Linux as well. You may need to change
+> `where` to `which`.
 
 ## Step 2: Install the QuPath Cellpose extension
 
@@ -69,6 +72,7 @@ You might then need to restart QuPath (but not your computer).
 
 > **Note**
 > In case you do not do this step, Cellpose training will still work, but the QC step will be skipped, and you will be notified that `run-cellpose-qc.py` cannot be found.
+> Additionally, this is the step that requires `scikit-image` as noted above.
 
 
 ## QuPath Extension Cellpose/Omnipose: First time setup
@@ -97,6 +101,52 @@ and you can then use it within the QuPath Extension Cellpose.
 
 # Using the Cellpose QuPath Extension
 
+## Prediction 
+
+Running Cellpose is done via a script and is very similar to the excellent [QuPath StarDist Extension](https://github.com/qupath/qupath-extension-stardist)
+
+You can find a template in QuPath in
+
+`Extensions > Cellpose > Cellpose detection script template`
+
+Or you can download the [Cellpose_detection_template.groovy](src/main/resources/scripts/Cellpose_detection_template.groovy) script from this repo and open it in the QuPath script editor.  
+
+> **Note**
+> Lines starting with `//` are commented out and are not used. To enable those parameters, delete the `//`. To disable a parameter, add `//` at the start of the line.
+  
+Make sure that line 26 `.channels()` has the name of the channel you wish to segment--or you can provide the number, starting with `0` for the first channel.   
+> **Note**
+> For brightfield images the R, G, and B channels are used. If you wish to use stains like `Hematoxylin`, you will need to add an extra line:  
+> `def stains = getCurrentImageData().getColorDeconvolutionStains() // stain deconvolution`  
+> *before* the `def cellpose = Cellpose2D.builder( pathModel )` line (line 23).  
+> Next, you will need to comment out the `.channels( 'DAPI' )` line by adding `//` at the start.  
+> Finally, in the next line, add this pre-processing step to deconvolve stains and get the first channel, channel `0`:  
+>        `.preprocess( ImageOps.Channels.deconvolve(stains), ImageOps.Channels.extract(0) )
+
+All builder options that are implemented are documented [in the Javadoc](https://biop.github.io/qupath-extension-cellpose/).
+You can pass additional options to `cellpose` by adding `.addParameter()` before the `.build()` line. For example on a macOS computer with Apple Silicon (e.g. M1, M2, M3) 
+you can use `.addParameter("gpu_device", "mps")` to use the GPU.
+
+> **Note**
+> By default the script will generate QuPath *detections* and not *annotations*. In order to obtain annotations (which can be edited and are needed for training, see below), you must uncomment line 44:
+> `.createAnnotations()` by deleting the `//` at the beginning of the line.
+
+> **Important**
+> Prior to running the script ensure that you have created a Project and have an image open with an annotation *selected* (it will be highlighted in yellow).
+> The script will segment cells within that annotation.
+
+The first thing the script will do is create a sub-folder in your project called `cellpose-temp`, followed by exporting the image(s) that will be processed by `cellpose`.
+If your segmentation is not what you expect, you can check that the exported image(s) represent what you intended for `cellpose` to segment.
+
+### Prediction using custom models
+All you need to use a custom model or your own trained model is to provide the path to the model to the `Cellpose2D.builder`. Just replace the name of the pre-trained model (e.g. `cyto2`)
+with the path to your model, for example:
+```
+// Specify the model name (cyto, nuclei, cyto2, omni_bact or a path to your custom model as a string)
+def pathModel = 'C:/cellpose-custom-models/cellpose_residual_on_style_on_concatenation_off_train_2023_07_26_11_31_47.433625'
+def cellpose = Cellpose2D.builder( pathModel )
+```
+
 ## Training custom models
 
 **Requirements**:
@@ -111,22 +161,48 @@ Here are some reasons we do it this way:
 
 **Protocol**
 
-1. In your QuPath project create rectangle annotations, of "Training" and "Validation" classes.
-2. Lock the rectangles (right click > Annotations > Lock). 
-3. Draw your ground truth. You can also run cellpose with `createAnnotations()` in the builder to have a starting ground truth you can manually correct. 
-4. The drawn ground truth annotations must have **no classes**.
+1. In your QuPath project create at least **2** rectangle annotations.
+2. In the Annotations tab, add new classes name "Training" and "Validation" and assign your rectangles to each of them. You do not need an equal number of Training and Validation rectangles. 
+3. Lock the rectangles (right click > Annotations > Lock). 
+4. Draw your ground truth annotations within all of the rectangles. You can also select each rectangle and run the `Cellpose detection script template` with the `.createAnnotations()` line
+   not commented out in the builder (see *Prediction* instructions above) to use a pre-trained cellpose model as a start, but make sure you manually correct it to get proper ground truth! 
+> **Important** Any ground truth annotations must have **no classes** assigned.
+5. Repeat this for as many images/regions of interest as you would like. **All images with Training or Validation annotations in the project will be used for the training.**
 
-After you have saved the project, you can run the Cellpose training template script in 
+Once you have your labeled Training and Validation rectangles with ground truth annotations, make sure you save your project! Then you can run the Cellpose training template script in 
 `Extensions > Cellpose > Cellpose training script template`
 
-Or you can download [Cellpose_training_template.groovy](src/main/resources/scripts/Cellpose_training_template.groovy) from this repo and run it from the script editor.
+Or you can download [Cellpose_training_template.groovy](src/main/resources/scripts/Cellpose_training_template.groovy) from this repo and run it from the script editor.  
+In the line `def cellpose = Cellpose2D.builder("cyto")` you can choose to fine-tune a pre-trained model (e.g. cyto), train from scratch (enter "None"), or start with a custom model (see below).
+Please see the *Prediction* instructions above for information regarding the other builder parameters.
+
+The first thing the script will do is create a sub-folder in your project called `cellpose-training` containing sub-folders `test` and `train`, followed by exporting the image(s)
+that will be processed by `cellpose`. The `train` folder will contain images of your training rectangles and your annotations converted to masks. The `test` folder will contain the
+Validation data, which is also used by the `QC` script. If your Validation is not what you expect, you can check that the exported image(s) represent what you intended for `cellpose` to train on.
+
+Once the script successfully completes training, you will have a `models` sub-folder within your Project folder, which will contain your custom model, as well as a `QC` sub-folder with the output
+of the QC script.
+
+### Training a custom model
+To train using your custom model, you need to provide the path to the model to the `Cellpose2D.builder`. Just replace the name of the pre-trained model (e.g. `cyto`)
+with the path to your model, for example:
+```
+// Specify the model name (cyto, nuclei, cyto2, omni_bact or a path to your custom model as a string)
+def pathModel = 'C:/cellpose-custom-models/cellpose_residual_on_style_on_concatenation_off_train_2023_07_26_11_31_47.433625'
+def cellpose = Cellpose2D.builder( pathModel )
+```
+
+> **Note** If you decide that your model needs more training, you can add more images to the Project and provide more annotated Training rectangles.
+> Further, you use your custom model to segment additional Training rectangles, as described in the *Prediction* section above, followed by manual correction.
+> Then save the Project and re-run the training script with the path of the custom model from the previous training step.
+> You can repeat this process as needed, by adding more training data and training the model obtained from the previous run--just edit the path to the model.
+> This is analogous to the `cellpose` 2.0 GUI `human-in-the-loop` process.
 
 ### More training options
 [All options in Cellpose](https://github.com/MouseLand/cellpose/blob/45f1a3c640efb8ca7d252712620af6f58d024c55/cellpose/__main__.py#L36) 
 have not been transferred. 
 
 In case that this might be of use to you, please [open an issue](https://github.com/BIOP/qupath-extension-cellpose/issues). 
-
 
 ### Training validation
 You can find a [run-cellpose-qc.py](QC/run-cellpose-qc.py) python script in the `QC` folder of this repository. This is 
@@ -146,27 +222,6 @@ our current guidelines:
 1. Use `saveBuilder()` which saves a JSON file of your CellposeBuilder, which can be reused with `CellposeBuilder(File builderFile)`. That way you will not lose the setting your did
 2. Save the `cellpose-training`, `QC` and `models` folders at the end of your training somewhere. This will contain everything that was made during training.
 3. Save the training script as well.
-
-## Prediction 
-
-Running Cellpose is done via a script and is very similar to the excellent [QuPath StarDist Extension](https://github.com/qupath/qupath-extension-stardist)
-
-You can find a template in QuPath in
-
-`Extensions > Cellpose > Cellpose training script template`
-
-Or you can download the [Cellpose_detection_template.groovy](src/main/resources/scripts/Cellpose_detection_template.groovy) script from this repo and place it in the script editor
-
-
-All builder options that are implemented are [in the Javadoc](https://biop.github.io/qupath-extension-cellpose/)
-
-### Prediction using custom models
-All you need to use your model is to provide the path to the CellposeBuilder
-```
-// Specify the model name (cyto, nuc, cyto2, omni_bact or a path to your custom model as a string)
-def pathModel = 'C:/cellpose-custom-models/cellpose_residual_on_style_on_concatenation_off_train_2023_07_26_11_31_47.433625'
-def cellpose = Cellpose2D.builder( pathModel )
-```
 
 ### Breaking changes after QuPath 0.4.0
 In order to make the extension more flexible and less dependent on the builder, a new Builder method `addParameter(name, value)` is available that can take [any cellpose CLI argument or argument pair](https://cellpose.readthedocs.io/en/latest/command.html#options). 
