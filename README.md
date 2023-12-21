@@ -176,7 +176,7 @@ Once you have your labeled Training and Validation rectangles with ground truth 
 
 Or you can download [Cellpose_training_template.groovy](src/main/resources/scripts/Cellpose_training_template.groovy) from this repo and run it from the script editor.
 
-> ** Note**
+> **Note**
 > In the line `def cellpose = Cellpose2D.builder("cyto")` you can choose to fine-tune a pre-trained model (e.g. cyto), train from scratch (enter "None"),
 > or start with a custom model (see below). Please see the *Prediction* instructions above for information regarding the other builder parameters.
 
