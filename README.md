@@ -123,7 +123,7 @@ Make sure that line 26 `.channels()` has the name of the channel you wish to seg
 > *before* the `def cellpose = Cellpose2D.builder( pathModel )` line (line 23).  
 > Next, you will need to comment out the `.channels( 'DAPI' )` line by adding `//` at the start.  
 > Finally, in the next line, add this pre-processing step to deconvolve stains and get the first channel, channel `0`:  
->        `.preprocess( ImageOps.Channels.deconvolve(stains), ImageOps.Channels.extract(0) )
+>        `.preprocess( ImageOps.Channels.deconvolve(stains), ImageOps.Channels.extract(0) )`
 
 All builder options that are implemented are documented [in the Javadoc](https://biop.github.io/qupath-extension-cellpose/).
 You can pass additional options to `cellpose` by adding `.addParameter()` before the `.build()` line. For example on a macOS computer with Apple Silicon (e.g. M1, M2, M3) 
