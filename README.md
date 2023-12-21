@@ -140,6 +140,8 @@ you can use `.addParameter("gpu_device", "mps")` to use the GPU.
 The first thing the script will do is create a sub-folder in your project called `cellpose-temp`, followed by exporting the image(s) that will be processed by `cellpose`.
 If your segmentation is not what you expect, you can check that the exported image(s) represent what you intended for `cellpose` to segment.
 
+Once you are happy with your script, you should save the edited copy to your Project (or another scripts folder) for re-use!
+
 ### Prediction using custom models
 All you need to use a custom model or your own trained model is to provide the path to the model to the `Cellpose2D.builder`. Just replace the name of the pre-trained model (e.g. `cyto2`)
 with the path to your model, for example:
@@ -187,6 +189,8 @@ Validation data, which is also used by the `QC` script. If your Validation is no
 Once the script successfully completes training, you will have a `models` sub-folder within your Project folder, which will contain your custom model, as well as a `QC` sub-folder with the output
 of the QC script.
 
+Once you are happy with your training script, you should save the edited copy to your Project (or another scripts folder) for re-use!
+
 ### Training a custom model
 To train using your custom model, you need to provide the path to the model to the `Cellpose2D.builder`. Just replace the name of the pre-trained model (e.g. `cyto`)
 with the path to your model, for example:
@@ -196,10 +200,13 @@ def pathModel = 'C:/cellpose-custom-models/cellpose_residual_on_style_on_concate
 def cellpose = Cellpose2D.builder( pathModel )
 ```
 
-> **Note** If you decide that your model needs more training, you can add more images to the Project and provide more annotated Training rectangles.
-> Further, you use your custom model to segment additional Training rectangles, as described in the *Prediction* section above, followed by manual correction.
-> Then save the Project and re-run the training script with the path of the custom model from the previous training step.
-> You can repeat this process as needed, by adding more training data and training the model obtained from the previous run--just edit the path to the model.
+> **Note**  
+> If you decide that your model needs more training, you can add more images to the Project and provide more annotated Training rectangles.  
+> You can use your custom model to segment additional Training rectangles, as described in the *Prediction* section above. Just be sure to 
+> perform careful manual correction!  
+> Then save the Project and re-run the training script with the path of the custom model from the previous training step.  
+> If you save your edited Prediction and Training scripts, you can repeat this process as needed, by adding more training data and training the model
+> obtained from the previous run--just edit the path to the model.  
 > This is analogous to the `cellpose` 2.0 GUI `human-in-the-loop` process.
 
 ### More training options
