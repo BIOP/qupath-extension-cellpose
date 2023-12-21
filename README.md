@@ -16,7 +16,7 @@ they can play nice.
 
 # Installation
 
-## Step 1: Install Cellpose and Omnipose
+## Step 1: Install Cellpose and/or Omnipose
 
 ## Installation with Conda/Mamba
 We provide the following YAML file that installs Cellpose and omnipose in the same environment.
@@ -28,8 +28,10 @@ You can create the environment with the following command using either conda or 
 ```bash
 mamba env create -f cellpose-omnipose-biop-gpu.yml
 ```
+> **Important** on macOS this environment will not work and you will need to follow the official Cellpose installation instructions below.
+
 ## Installation from the official Cellpose documentation
-Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose). And
+Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose#Installation). And
 Omnipose from [the main Omnipose repository](https://omnipose.readthedocs.io/installation.html)
 This extension will need to know the path to at least your Cellpose environment. If you plan on using Omnipose, you will also need to install it. 
 
