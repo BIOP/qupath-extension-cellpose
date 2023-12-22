@@ -41,19 +41,20 @@ if you plan on using Omnipose. You will need to enter this information in the Qu
 > [!IMPORTANT]
 > Make sure you activate your Cellpose environment and then check the path! 
 
-For example, if you installed `cellpose` into an environment named 
-`cellpose-omnipose-biop-gpu` then you can get the path to the Python executable on Windows as follows:
-
+For example, if you installed `cellpose` into an conda environment named `cellpose-omnipose-biop-gpu` then you can get the path 
+to the Python executable using the command line or terminal  using the following two commands to activate the conda environment 
+and locate the Python binary (the 3rd line is example output).  
+On Windows:
 ```
-mamba activate cellpose-omnipose-biop-gpu
-where python
+> mamba activate cellpose-omnipose-biop-gpu
+> where python
 F:\conda-envs\cellpose-omnipose-biop-gpu\python.exe
 ```
 
-Meanwhile on macOS or Linux:
+On macOS or Linux:
 ```
-mamba activate cellpose-omnipose-biop-gpu
-which python
+> mamba activate cellpose-omnipose-biop-gpu
+> which python
 {HOME}/conda/envs/cellpose-omnipose-biop-gpu/bin/python
 ```
 where `{HOME}` will be the location of your home directory, typically `/Users/user-name/` on macOS or `/home/user-name/` on Linux.
