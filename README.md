@@ -18,38 +18,32 @@ they can play nice.
 
 ## Step 1: Install Cellpose and/or Omnipose
 
-## Installation with Conda/Mamba
-We provide the following YAML file that installs Cellpose and omnipose in the same environment.
-The configuration files are without guarantee, but these are the ones we use for our Windows machines.
-[Download `cellpose-omnipose-biop-gpu.yml`](files/cellpose-omnipose-biop-gpu.yml)
-
-You can create the environment with the following command using either conda or mamba:
-
-```bash
-mamba env create -f cellpose-omnipose-biop-gpu.yml
-```
-> **Important** on macOS this environment will not work and you will need to follow the official Cellpose installation instructions below.
-
 ## Installation from the official Cellpose documentation
-Follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose#Installation). And
-Omnipose from [the main Omnipose repository](https://omnipose.readthedocs.io/installation.html)
-This extension will need to know the path to at least your Cellpose environment. If you plan on using Omnipose, you will also need to install it. 
+You will need a Python virtual environment with Cellpose working.  
+Please follow the instructions to install Cellpose from [the main Cellpose repository](https://github.com/mouseland/cellpose#Installation). 
+Likewise, for Omnipose please see [the main Omnipose repository](https://omnipose.readthedocs.io/installation.html)
+Note that for GPU acceleration on Windows and Linux you may need to [install additional
+CUDA packages](https://github.com/MouseLand/cellpose#gpu-version-cuda-on-windows-or-linux).
 
 > **Note**
 > ### `scikit-image` Dependency
 > As of version 0.4 of this extension, QC (quality control) is run **automatically** when training a model.
-> Due to the dependencies of the validation code located inside [run-cellpose-qc.py](QC/run-cellpose-qc.py) there is an extra dependency: `scikit-image`.
+> Due to the dependencies of the validation Python script [run-cellpose-qc.py](QC/run-cellpose-qc.py) there is an extra dependency: `scikit-image`.
 > 
-> The simplest way to add it, is when installing Cellpose as instructed in the official repository and adding scikit-image
-> `python -m pip install cellpose scikit-image`
-> or
-> `python -m pip install omnipose scikit-image`
+> The simplest way to add it is to install it the same way you installed Cellpose or Omnipose in the same Python virtual environment.
+> For example, if you used `pip` to install `cellpose` you would use:
+> `python -m pip install scikit-image`
+> or if you used `conda`:
+> `conda install scikit-image`
 
+### Get the path to the Python executable
+This extension will then need to know *the path* (the location in your file system) to (at least) your Cellpose environment plus your Omnipose environment, 
+if you plan on using Omnipose. You will need to enter this information in the QuPath Preferences when configuring the QuPath Cellpose extension.
 
-### Check the path to the Python executable
-We will need this information later when configuring the QuPath Cellpose extension.
-For example, if you installed `cellpose` into an environment named `cellpose-omnipose-biop-gpu`
-then you can get the path to the Python executable as follows:
+> **Important** Make sure you activate your Cellpose environment and then check the path! 
+
+For example, if you installed `cellpose` into an environment named 
+`cellpose-omnipose-biop-gpu` then you can get the path to the Python executable on Windows as follows:
 
 ```
 mamba activate cellpose-omnipose-biop-gpu
@@ -57,9 +51,13 @@ where python
 F:\conda-envs\cellpose-omnipose-biop-gpu\python.exe
 ```
 
-> **Note**
-> While this example is done under Windows, this will work on Mac and Linux as well. You may need to change
-> `where` to `which`.
+Meanwhile on macOS or Linux:
+```
+mamba activate cellpose-omnipose-biop-gpu
+which python
+{HOME}/conda/envs/cellpose-omnipose-biop-gpu/bin/python
+```
+where `{HOME}` will be the location of your home directory, typically `/Users/user-name/` on macOS or `/home/user-name/` on Linux.
 
 ## Step 2: Install the QuPath Cellpose extension
 
