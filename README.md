@@ -85,7 +85,7 @@ Complete the fields with the requested information. based on the `mamba` install
 > [!NOTE]
 > You have the possibility to provide **two** different environments. One for Cellpose and one for Omnipose. 
 > If you do not plan on using Omnipose or have installed both cellpose and Omnipose in the same environment, you can leave it blank.
-> > The reason for this is that there may be versions of cellpose and its dependencies that might not match with Omnipose. Adding to that, some parameters
+> The reason for this is that there may be versions of cellpose and its dependencies that might not match with Omnipose. Adding to that, some parameters
 > in cellpose and omnipose are currently out of sync, so it could be wiser to keep them separate.
 
 > [!IMPORTANT]
