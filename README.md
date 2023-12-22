@@ -78,7 +78,8 @@ You might then need to restart QuPath (but not your computer).
 ## QuPath Extension Cellpose/Omnipose: First time setup
 
 Go to `Edit > Preferences > Cellpose/Omnipose`
-Complete the fields with the requested information. based on the `mamba` installation above, this is what it should look like on Windows:
+Complete the fields with the requested information by pasting the path(s) you obtained above. 
+Based on the `mamba` installation above, this is what it should look like on Windows:
 ![Cellpose setup example](files/cellpose-qupath-setup-example.png)
 
 > [!NOTE]
