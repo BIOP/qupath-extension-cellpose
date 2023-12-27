@@ -148,8 +148,8 @@ public class Cellpose2D {
     protected Integer overlap;
 
     protected File modelDirectory;
-    protected File trainDirectory;
-    protected File valDirectory;
+
+    public File groundTruthDirectory;
     protected int nThreads = -1;
     File tempDirectory;
     private String[] theLog;
@@ -269,7 +269,7 @@ public class Cellpose2D {
      * @return the directory
      */
     public File getTrainingDirectory() {
-        return trainDirectory;
+        return new File( groundTruthDirectory, "train");
     }
 
     /**
@@ -278,7 +278,7 @@ public class Cellpose2D {
      * @return the directory
      */
     public File getValidationDirectory() {
-        return valDirectory;
+        return new File( groundTruthDirectory, "test");
     }
 
     private Geometry simplify(Geometry geom) {
@@ -316,12 +316,9 @@ public class Cellpose2D {
 
         Objects.requireNonNull(parents);
 
-        try {
-            FileUtils.cleanDirectory(tempDirectory);
-        } catch (IOException e) {
-            logger.error("Could not clean temp directory {}", tempDirectory);
-            logger.error("Message: ", e);
-        }
+        // Make the temp directory
+        cleanDirectory(tempDirectory);
+
 
         PixelCalibration resolution = imageData.getServer().getPixelCalibration();
         if (Double.isFinite(pixelSize) && pixelSize > 0) {
@@ -511,6 +508,21 @@ public class Cellpose2D {
 
     }
 
+    private void cleanDirectory( File directory ) {
+        // Delete the existing directory
+        try {
+            FileUtils.deleteDirectory(directory);
+        } catch (IOException e) {
+            logger.error("Failed to delete temp directory", e);
+        }
+
+        // Recreate the directory
+        try {
+            FileUtils.forceMkdir(directory);
+        } catch (IOException e) {
+            logger.error("Failed to create temp directory", e);
+        }
+    }
 
     private PathObject convertToObject(CandidateObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
         var geomNucleus = simplify(object.geometry);
@@ -770,7 +782,7 @@ public class Cellpose2D {
         try {
 
             // Clear a previous run
-            FileUtils.cleanDirectory(this.trainDirectory);
+            cleanDirectory(this.groundTruthDirectory);
 
             saveTrainingImages();
 
@@ -810,10 +822,10 @@ public class Cellpose2D {
         cellposeArguments.add("--train");
 
         cellposeArguments.add("--dir");
-        cellposeArguments.add("" + trainDirectory.getAbsolutePath());
+        cellposeArguments.add("" + getTrainingDirectory().getAbsolutePath());
 
         cellposeArguments.add("--test_dir");
-        cellposeArguments.add("" + valDirectory.getAbsolutePath());
+        cellposeArguments.add("" + getValidationDirectory().getAbsolutePath());
 
         cellposeArguments.add("--pretrained_model");
         if (model != null) {
@@ -852,7 +864,7 @@ public class Cellpose2D {
         logger.info("Running the new model {} on the validation images to obtain labels for QC", this.modelFile.getName());
 
         File tmp = this.tempDirectory;
-        this.tempDirectory = this.valDirectory;
+        this.tempDirectory = getValidationDirectory();
 
         String tmpModel = this.model;
         this.model = modelFile.getAbsolutePath();
@@ -893,14 +905,14 @@ public class Cellpose2D {
 
         // Start the Virtual Environment Runner
         VirtualEnvironmentRunner qcRunner = getVirtualEnvironmentRunner();
-        List<String> qcArguments = new ArrayList<>(Arrays.asList(qcPythonFile.getAbsolutePath(), this.valDirectory.getAbsolutePath(), this.modelFile.getName()));
+        List<String> qcArguments = new ArrayList<>(Arrays.asList(qcPythonFile.getAbsolutePath(), getValidationDirectory().getAbsolutePath(), this.modelFile.getName()));
 
         qcRunner.setArguments(qcArguments);
 
         qcRunner.runCommand();
 
         // The results are stored in the validation directory, open them as a results table
-        File qcResults = new File(this.valDirectory, "QC-Results" + File.separator + "Quality_Control for " + this.modelFile.getName() + ".csv");
+        File qcResults = new File( getValidationDirectory(), "QC-Results" + File.separator + "Quality_Control for " + this.modelFile.getName() + ".csv");
 
         if (!qcResults.exists()) {
             logger.warn("No QC results file name {} found in {}\nCheck in the logger for a potential reason", qcResults.getName(), qcResults.getParent());
@@ -1106,6 +1118,14 @@ public class Cellpose2D {
      */
     public void saveTrainingImages() {
 
+        // Create the required directories if they don't exist
+        File trainDirectory = getTrainingDirectory();
+        trainDirectory.mkdirs();
+
+        File valDirectory = getValidationDirectory();
+        valDirectory.mkdirs();
+
+
         Project<BufferedImage> project = QPEx.getQuPath().getProject();
 
         project.getImageList().forEach(e -> {
@@ -1202,7 +1222,7 @@ public class Cellpose2D {
      * @throws IOException in case there was a problem moving the file
      */
     private File moveAndReturnModelFile() throws IOException {
-        File cellPoseModelFolder = new File(trainDirectory, "models");
+        File cellPoseModelFolder = new File(getTrainingDirectory(), "models");
         // Find the first file in there
         File[] all = cellPoseModelFolder.listFiles();
         Optional<File> cellPoseModel = Arrays.stream(Objects.requireNonNull(all)).filter(f -> f.getName().contains("cellpose")).findFirst();

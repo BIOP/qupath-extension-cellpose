@@ -779,7 +779,6 @@ public class CellposeBuilder {
         if (this.tempDirectory == null) {
             this.tempDirectory = new File(quPathProjectDir, "cellpose-temp");
         }
-        tempDirectory.mkdirs();
 
         // Prepare training directory in case it was not set
         if (this.groundTruthDirectory == null) {
@@ -789,17 +788,14 @@ public class CellposeBuilder {
         if (this.modelDirectory == null) {
             this.modelDirectory = new File(quPathProjectDir, "models");
         }
-        modelDirectory.mkdirs();
 
         // Define training and validation directories inside the QuPath Project
         File trainDirectory = new File(groundTruthDirectory, "train");
         File valDirectory = new File(groundTruthDirectory, "test");
-        trainDirectory.mkdirs();
-        valDirectory.mkdirs();
+
 
         cellpose.modelDirectory = modelDirectory;
-        cellpose.trainDirectory = trainDirectory;
-        cellpose.valDirectory = valDirectory;
+        cellpose.groundTruthDirectory = groundTruthDirectory;
         cellpose.tempDirectory = tempDirectory;
 
         cellpose.extendChannelOp = extendChannelOp;
