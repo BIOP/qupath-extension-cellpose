@@ -74,6 +74,8 @@ import java.awt.image.RenderedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -152,7 +154,7 @@ public class Cellpose2D {
     public File groundTruthDirectory;
     protected int nThreads = -1;
     File tempDirectory;
-    private String[] theLog;
+    private List<String> theLog;
     // Results table from the training
     private ResultsTable trainingResults;
     private ResultsTable qcResults;
@@ -344,7 +346,7 @@ public class Cellpose2D {
 
         final double finalDownsample = downsample;
 
-        List<PathTile> allTiles = parents.parallelStream().map(parent -> {
+        LinkedHashMap<File, TileFile> allTiles = parents.parallelStream().map(parent -> {
             RegionRequest request = RegionRequest.createInstance(
                     opServer.getPath(),
                     opServer.getDownsampleForResolution(0),
@@ -386,57 +388,41 @@ public class Cellpose2D {
             logger.info("Saving images for {} tiles", tiles.size());
 
             // Save each tile to an image and keep a reference to it
-            var individualTiles = tiles.parallelStream()
+            LinkedHashMap<File, TileFile> individualTiles = tiles.parallelStream()
                     .map(t -> {
                         try {
-                            return saveTileImage(opWithPreprocessing, imageData, t);
+                            return saveTileImage(opWithPreprocessing, imageData, t, parent);
                         } catch (IOException e) {
                             e.printStackTrace();
                         }
                         return null;
                     })
-                    .collect(Collectors.toList());
-            return new PathTile(parent, individualTiles);
-        }).toList();
+                    .collect(Collectors.toMap(TileFile::getImageFile, Function.identity(), (a, b) -> a, LinkedHashMap::new));
+            return individualTiles;
+        }).flatMap(m -> m.entrySet().stream()).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
 
-        // Here the files are saved, and we can run cellpose.
+        // Here the files are saved, and we can run cellpose to recover the masks
+
         try {
-            runDetection();
+            allTiles = runCellpose(allTiles);
         } catch (IOException | InterruptedException e) {
             logger.error("Failed to Run Cellpose", e);
         }
 
-        // Recover all the images from CellPose to get the masks
+        logger.info("All tiles and objects read, now resolving overlaps");
+
+        // Group the candidates per parent object, as this is needed to optimize when checking for overlap
+        Map<PathObject, List<CandidateObject>> candidatesPerParent = allTiles.values().stream()
+                .flatMap(t -> t.getCandidates().stream())
+                .collect(Collectors.groupingBy(c -> c.parent));
+
         double finalDownsample1 = downsample;
-        allTiles.parallelStream().forEach(tileMap -> {
-            PathObject parent = tileMap.getObject();
-            // Read each image
-            List<CandidateObject> allCandidates = Collections.synchronizedList(new ArrayList<>());
-            tileMap.getTileFiles().parallelStream().forEach(tilefile -> {
-                File ori = tilefile.getFile();
-                File maskFile = new File(ori.getParent(), FilenameUtils.removeExtension(ori.getName()) + "_cp_masks.tif");
-                if (maskFile.exists()) {
-                    logger.info("Getting objects for {}", maskFile);
+        candidatesPerParent.entrySet().parallelStream().forEach(e -> {
+            PathObject parent = e.getKey();
+            List<CandidateObject> parentCandidates = e.getValue();
 
-                    // thank you, Pete for the ContourTracing Class
-                    Collection<CandidateObject> candidates = null;
-                    try {
-
-                        candidates = readObjectsFromFile(maskFile, tilefile.getTile()).stream().filter(c -> parent.getROI().getGeometry().intersects(c.geometry)).collect(Collectors.toList());
-
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                    logger.info("Getting objects for {} Done", maskFile);
-                    if( candidates != null)
-                        allCandidates.addAll(candidates);
-                }
-            });
-
-            //Remove candidates that are not within the parent objects
-            // Filter Detections: Remove overlaps
-            List<CandidateObject> filteredDetections = filterDetections(allCandidates);
-
+            // Filter the detections
+            List<CandidateObject> filteredDetections = filterDetections(parentCandidates);
 
             // Remove the detections that are not contained within the parent
             Geometry mask = parent.getROI().getGeometry();
@@ -447,9 +433,9 @@ public class Cellpose2D {
             List<PathObject> finalObjects = filteredDetections.parallelStream()
                     .map(n -> {
                         try {
-                            return convertToObject(n, tileMap.getObject().getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
-                        } catch (Exception e) {
-                            logger.warn("Error converting to object: " + e.getLocalizedMessage(), e);
+                            return convertToObject(n, parent.getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
+                        } catch (Exception oe) {
+                            logger.warn("Error converting to object: " + oe.getLocalizedMessage(), oe);
                             return null;
                         }
                     }).filter(Objects::nonNull)
@@ -490,8 +476,8 @@ public class Cellpose2D {
                 finalObjects.parallelStream().forEach(cell -> {
                     try {
                         ObjectMeasurements.addIntensityMeasurements(server2, cell, finalDownsample1, measurements, compartments);
-                    } catch (IOException e) {
-                        logger.info(e.getLocalizedMessage(), e);
+                    } catch (IOException ie) {
+                        logger.info(ie.getLocalizedMessage(), ie);
                     }
                 });
 
@@ -500,7 +486,7 @@ public class Cellpose2D {
             // Assign the objects to the parent object
             parent.setLocked(true);
             parent.clearChildObjects();
-            tileMap.getObject().addChildObjects(finalObjects);
+            parent.addChildObjects(finalObjects);
         });
 
         // Update the hierarchy
@@ -678,7 +664,7 @@ public class Cellpose2D {
      * @return a simple object that contains the request and the associated file in the temp folder
      * @throws IOException an error in case of read/write issue
      */
-    private TileFile saveTileImage(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request) throws IOException {
+    private TileFile saveTileImage(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request, PathObject parent) throws IOException {
 
 
         // This applies all ops to the current tile
@@ -700,7 +686,7 @@ public class Cellpose2D {
         logger.info("Saving to {}", tempFile);
         IJ.save(imp, tempFile.getAbsolutePath());
 
-        return new TileFile(request, tempFile);
+        return new TileFile(request, tempFile, parent);
     }
 
     /**
@@ -731,7 +717,9 @@ public class Cellpose2D {
      * @throws IOException          Exception in case files could not be read
      * @throws InterruptedException Exception in case of command thread has some failing
      */
-    private void runDetection() throws IOException, InterruptedException {
+    private LinkedHashMap<File, TileFile> runCellpose(LinkedHashMap<File, TileFile> allTiles) throws IOException, InterruptedException {
+
+
         String runCommand = this.parameters.containsKey("omni") ? "omnipose" : "cellpose";
         VirtualEnvironmentRunner veRunner = getVirtualEnvironmentRunner();
 
@@ -752,7 +740,6 @@ public class Cellpose2D {
         });
 
         // These all work for cellpose v2
-
         cellposeArguments.add("--save_tif");
 
         cellposeArguments.add("--no_npy");
@@ -763,10 +750,69 @@ public class Cellpose2D {
 
         veRunner.setArguments(cellposeArguments);
 
+        if( allTiles != null ) {
+            // We need to listen for changes in the temp folder
+            veRunner.startWatchService(this.tempDirectory.toPath());
+        }
         // Finally, we can run Cellpose
-        theLog = veRunner.runCommand();
+        veRunner.runCommand();
 
-        logger.info("Cellpose command finished running");
+        // Just run it, we do not need to listen for changes
+        if( allTiles == null ) {
+            veRunner.getProcess().waitFor();
+            return null;
+        }
+
+        //Make a map of the original names and the expected names
+        LinkedHashMap<File, File> remainingFiles = allTiles.entrySet().stream().map(entry -> {
+            File originalFile = entry.getKey();
+            File expectedFile = entry.getValue().getLabelFile();
+            return new AbstractMap.SimpleEntry<>(originalFile, expectedFile);
+        }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+
+
+        // Build a thread pool to process reading the images in parallel
+        ExecutorService executor = Executors.newFixedThreadPool(5);
+
+        // The command above will run in a separate thread, now we can start listening for the files changing
+        while ( veRunner.getProcess().isAlive() || remainingFiles.size() > 0 ) {
+
+            // Get the files that have changes
+            List<String> changedFiles = veRunner.getChangedFiles();
+            if( changedFiles.size() == 0 ) {
+                continue;
+            }
+            // Find the tiles that corresponds to the changed files
+
+            LinkedHashMap<File, File> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
+                // Create a file that matches the mask name
+                return changedFiles.contains(set.getValue().getName());
+            }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+
+            // Announce that these files are done
+            finishedFiles.entrySet().forEach(set -> {
+                TileFile tile = allTiles.get(set.getKey());
+                    executor.submit(() -> {
+                        // Read the objects from the file
+                        Collection<CandidateObject> candidates;
+                        try {
+                            candidates = readObjectsFromFile(tile);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                        tile.setCandidates(candidates);
+                    });
+            });
+
+
+            // Remove them from the list of remaining files
+            remainingFiles = remainingFiles.entrySet().stream().filter( v -> !finishedFiles.containsKey(v.getKey())).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+        }
+
+        executor.shutdown();
+        executor.awaitTermination(10, TimeUnit.MINUTES);
+
+        return allTiles;
     }
 
     /**
@@ -849,9 +895,13 @@ public class Cellpose2D {
         veRunner.setArguments(cellposeArguments);
 
         // Finally, we can run Cellpose
-        theLog = veRunner.runCommand();
+        veRunner.runCommand();
 
-        logger.info("Cellpose command finished running");
+        // Wait for the process to finish
+        veRunner.getProcess().waitFor();
+
+        // Get the log
+        this.theLog = veRunner.getProcessLog();
     }
 
     /**
@@ -870,7 +920,7 @@ public class Cellpose2D {
         this.model = modelFile.getAbsolutePath();
 
         try {
-            runDetection();
+            runCellpose(null);
         } catch (InterruptedException | IOException e) {
             logger.error(e.getMessage(), e);
         }
@@ -933,7 +983,7 @@ public class Cellpose2D {
      *
      * @return the entire dump of the cellpose log, each line is one element of the String array.
      */
-    public String[] getOutputLog() {
+    public List<String> getOutputLog() {
         return theLog;
     }
 
@@ -1114,7 +1164,7 @@ public class Cellpose2D {
     }
 
     /**
-     * Save training images for the project
+     * Goes through the current project and saves the images and masks to the training and validation directories
      */
     public void saveTrainingImages() {
 
@@ -1237,8 +1287,16 @@ public class Cellpose2D {
         return null;
     }
 
-    private Collection<CandidateObject> readObjectsFromFile(File maskFile, RegionRequest region) throws IOException {
-        BufferedImage bfImage = ImageIO.read(maskFile);
+    /**
+     * convert a label image to a collection of Geometry objects
+     * @param tileFile the current tileFile we are processing
+     * @return a collection of CandidateObject that will be added to the total objects
+     * @throws IOException in case there was a problem reading the label file
+     */
+    private Collection<CandidateObject> readObjectsFromFile(TileFile tileFile) throws IOException {
+
+        logger.info("Reading objects from file {}", tileFile.getLabelFile().getName());
+        BufferedImage bfImage = ImageIO.read(tileFile.getLabelFile());
         SimpleImage image = ContourTracing.extractBand(bfImage.getRaster(), 0);
         float[] pixels = SimpleImages.getPixels(image, true);
 
@@ -1253,9 +1311,9 @@ public class Cellpose2D {
         float lastLabel = Float.NaN;
         for (float p : pixels) {
             if (p >= 1 && p <= maxLabel && p != lastLabel && !candidates.containsKey(p)) {
-                Geometry geometry = ContourTracing.createTracedGeometry(image, p, p, region);
+                Geometry geometry = ContourTracing.createTracedGeometry(image, p, p, tileFile.getTile());
                 if (geometry != null && !geometry.isEmpty())
-                    candidates.put(p, new CandidateObject(geometry));
+                    candidates.put(p, new CandidateObject(geometry, tileFile.getParent()));
                 lastLabel = p;
             }
         }
@@ -1264,55 +1322,60 @@ public class Cellpose2D {
     }
 
     /**
-     * Static class to hold the correspondence between a RegionRequest and a saved file, so that we can place the detected ROIs in the right place.
+     * Static class to hold the correspondence between a
+     * RegionRequest and a saved file.
+     * This also contains a way to infer the resulting image mask file name
      */
     private static class TileFile {
         private final RegionRequest request;
-        private final File file;
+        private final File imageFile;
+        private final PathObject parent;
 
-        TileFile(RegionRequest request, File tempFile) {
+        private Collection<CandidateObject> candidates;
+
+
+        TileFile(RegionRequest request, File imageFile, PathObject parent) {
             this.request = request;
-            this.file = tempFile;
+            this.parent = parent;
+            this.imageFile = imageFile;
+        }
+        public void setCandidates(Collection<CandidateObject> candidates) {
+            this.candidates = candidates;
         }
 
-        public File getFile() {
-            return file;
+        public File getImageFile() {
+            return imageFile;
+        }
+
+        public File getLabelFile() {
+            return new File(FilenameUtils.removeExtension(imageFile.getAbsolutePath()) + "_cp_masks.tif");
         }
 
         public RegionRequest getTile() {
             return request;
         }
+
+        public PathObject getParent() {
+            return parent;
+        }
+
+        public Collection<CandidateObject> getCandidates() {
+            return this.candidates;
+        }
     }
 
     /**
-     * Static class that contains all the tiles as {@link TileFile}s for each object
-     * This will allow us to make sure that each object has the right child objects assigned to it after prediction
+     * Static class that holds each geometry in order to quickly check overlaps
      */
-    private static class PathTile {
-        private final PathObject object;
-        private final List<TileFile> tile;
-
-        PathTile(PathObject object, List<TileFile> tile) {
-            this.object = object;
-            this.tile = tile;
-        }
-
-        public PathObject getObject() {
-            return this.object;
-        }
-
-        public List<TileFile> getTileFiles() {
-            return tile;
-        }
-    }
-
     private static class CandidateObject {
         private final double area;
         private Geometry geometry;
+        private PathObject parent; // Perhaps this duplicated things a bit but we need it to sort the data
 
-        CandidateObject(Geometry geom) {
+        CandidateObject(Geometry geom, PathObject parent) {
             this.geometry = geom;
             this.area = geom.getArea();
+            this.parent = parent;
 
             // Clean up the geometry already
             geometry = GeometryTools.ensurePolygonal(geometry);
