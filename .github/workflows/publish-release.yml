@@ -27,6 +27,6 @@ jobs:
           MAVEN_PASS: ${{ secrets.MAVEN_PASS }}
       - uses: actions/upload-artifact@v3
         with:
-          name: qupath-stardist-extension-release-jar
+          name: qupath-cellpose-extension-release-jar
           path: build/libs
           retention-days: 7
