@@ -8,9 +8,12 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -23,10 +26,14 @@ import java.util.stream.Collectors;
 public class VirtualEnvironmentRunner {
     private final static Logger logger = LoggerFactory.getLogger(VirtualEnvironmentRunner.class);
     private final EnvType envType;
+    private WatchService watchService;
     private String name;
     private String environmentNameOrPath;
 
     private List<String> arguments;
+
+    private List<String> logResults;
+    private Process process;
 
     /**
      * This enum helps us figure out the type of virtualenv. We need to change {@link #getActivationCommand()} as well.
@@ -88,11 +95,11 @@ public class VirtualEnvironmentRunner {
             case VENV:
                 switch (platform) {
                     case WINDOWS:
-                        cmd.addAll(Arrays.asList(new File(environmentNameOrPath, "Scripts/python").getAbsolutePath()));
+                        cmd.add(new File(environmentNameOrPath, "Scripts/python").getAbsolutePath());
                         break;
                     case UNIX:
                     case OSX:
-                        cmd.addAll(Arrays.asList(new File(environmentNameOrPath, "bin/python").getAbsolutePath()));
+                        cmd.add(new File(environmentNameOrPath, "bin/python").getAbsolutePath());
                         break;
                 }
                 break;
@@ -108,7 +115,7 @@ public class VirtualEnvironmentRunner {
     /**
      * This is the code you actually want to run after 'python'. For example adding {@code Arrays.asList("--version")}
      * should return the version of python that is being run.
-     * @param arguments
+     * @param arguments any cellpose or omnipose command line argument
      */
     public void setArguments(List<String> arguments) {
         this.arguments = arguments;
@@ -116,13 +123,10 @@ public class VirtualEnvironmentRunner {
 
     /**
      * This builds, runs the command and outputs it to the logger as it is being run
-     * @throws IOException // In case there is an issue starting the process
-     * @throws InterruptedException // In case there is an issue after the process is started
-     * @return a string list containing the log of the command
+     *
+     * @throws IOException          // In case there is an issue starting the process
      */
-    public String[] runCommand() throws IOException, InterruptedException {
-
-        List<String> logResults = new ArrayList<>();
+    public void runCommand() throws IOException {
 
         // Get how to start the command, based on the VENV Type
         List<String> command = getActivationCommand();
@@ -178,12 +182,15 @@ public class VirtualEnvironmentRunner {
         ProcessBuilder pb = new ProcessBuilder(shell).redirectErrorStream(true);
 
         // Start the process and follow it throughout
-        Process p = pb.start();
+        this.process = pb.start();
 
-        Thread t = new Thread(Thread.currentThread().getName() + "-" + p.hashCode()) {
+        // Keep the log of the process
+        logResults = new ArrayList<>();
+
+        Thread t = new Thread(Thread.currentThread().getName() + "-" + this.process.hashCode()) {
             @Override
             public void run() {
-                BufferedReader stdIn = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                BufferedReader stdIn = new BufferedReader(new InputStreamReader(process.getInputStream()));
                 try {
                     for (String line = stdIn.readLine(); line != null; ) {
                         logger.info("{}: {}", name, line);
@@ -198,17 +205,35 @@ public class VirtualEnvironmentRunner {
         t.setDaemon(true);
         t.start();
 
-        p.waitFor();
 
-        logger.info("Virtual Environment Runner Finished");
+        logger.info("Virtual Environment Runner Started");
+    }
 
-        int exitValue = p.exitValue();
+    public Process getProcess() {
+        return this.process;
+    }
+    public List<String> getProcessLog() {
+        return this.logResults;
+    }
+    public void startWatchService(Path folderToListen) throws IOException {
+        this.watchService = FileSystems.getDefault().newWatchService();
 
-        if (exitValue != 0) {
-            logger.error("Runner '{}' exited with value {}. Please check output above for indications of the problem.", name, exitValue);
-        }
+        folderToListen.register(watchService, StandardWatchEventKinds.ENTRY_MODIFY);
+    }
 
-        // Return the log in case we want to use it
-        return logResults.toArray(new String[0]);
+    public List<String> getChangedFiles() throws InterruptedException {
+        WatchKey key = watchService.poll(100, TimeUnit.MICROSECONDS);
+        if (key == null)
+            return Collections.emptyList();
+        List<WatchEvent<?>> events = key.pollEvents();
+        List<String>files = events.stream()
+                .map(e -> ((Path) e.context()).toString())
+                .collect(Collectors.toList());
+        key.reset();
+        return files;
+    }
+
+    public void closeWatchService() throws IOException {
+        if (watchService != null ) watchService.close();
     }
 }
