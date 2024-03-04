@@ -74,10 +74,7 @@ import java.awt.image.RenderedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -153,6 +150,9 @@ public class Cellpose2D {
 
     public File groundTruthDirectory;
     protected int nThreads = -1;
+
+    protected boolean doReadResultsAsynchronously;
+
     File tempDirectory;
     private List<String> theLog;
     // Results table from the training
@@ -407,6 +407,7 @@ public class Cellpose2D {
             allTiles = runCellpose(allTiles);
         } catch (IOException | InterruptedException e) {
             logger.error("Failed to Run Cellpose", e);
+            return;
         }
 
         logger.info("All tiles and objects read, now resolving overlaps");
@@ -417,6 +418,7 @@ public class Cellpose2D {
                 .collect(Collectors.groupingBy(c -> c.parent));
 
         double finalDownsample1 = downsample;
+
         candidatesPerParent.entrySet().parallelStream().forEach(e -> {
             PathObject parent = e.getKey();
             List<CandidateObject> parentCandidates = e.getValue();
@@ -717,7 +719,7 @@ public class Cellpose2D {
      * @throws IOException          Exception in case files could not be read
      * @throws InterruptedException Exception in case of command thread has some failing
      */
-    private LinkedHashMap<File, TileFile> runCellpose(LinkedHashMap<File, TileFile> allTiles) throws IOException, InterruptedException {
+    private LinkedHashMap<File, TileFile> runCellpose(LinkedHashMap<File, TileFile> allTiles) throws InterruptedException, IOException {
 
 
         String runCommand = this.parameters.containsKey("omni") ? "omnipose" : "cellpose";
@@ -750,64 +752,92 @@ public class Cellpose2D {
 
         veRunner.setArguments(cellposeArguments);
 
-        if( allTiles != null ) {
-            // We need to listen for changes in the temp folder
-            veRunner.startWatchService(this.tempDirectory.toPath());
-        }
         // Finally, we can run Cellpose
         veRunner.runCommand();
 
-        // Just run it, we do not need to listen for changes
-        if( allTiles == null ) {
-            veRunner.getProcess().waitFor();
-            return null;
-        }
+        return processCellposeFiles(veRunner, allTiles);
 
-        //Make a map of the original names and the expected names
-        LinkedHashMap<File, File> remainingFiles = allTiles.entrySet().stream().map(entry -> {
-            File originalFile = entry.getKey();
-            File expectedFile = entry.getValue().getLabelFile();
-            return new AbstractMap.SimpleEntry<>(originalFile, expectedFile);
-        }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+    }
 
+    private LinkedHashMap<File, TileFile> processCellposeFiles(VirtualEnvironmentRunner veRunner, LinkedHashMap<File, TileFile> allTiles) throws CancellationException, InterruptedException, IOException {
 
         // Build a thread pool to process reading the images in parallel
         ExecutorService executor = Executors.newFixedThreadPool(5);
 
-        // The command above will run in a separate thread, now we can start listening for the files changing
-        while ( veRunner.getProcess().isAlive() || remainingFiles.size() > 0 ) {
+        if (!this.doReadResultsAsynchronously || allTiles == null) {
+            // We need to wait for the process to finish
+            veRunner.getProcess().waitFor();
+            allTiles.entrySet().forEach(entry -> {
+                executor.execute(() -> {
+                    // Read the objects from the file
+                    Collection<CandidateObject> candidates;
+                    try {
+                        candidates = readObjectsFromFile(entry.getValue());
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                    entry.getValue().setCandidates(candidates);
+                });
 
-            // Get the files that have changes
-            List<String> changedFiles = veRunner.getChangedFiles();
-            if( changedFiles.size() == 0 ) {
-                continue;
-            }
-            // Find the tiles that corresponds to the changed files
-
-            LinkedHashMap<File, File> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
-                // Create a file that matches the mask name
-                return changedFiles.contains(set.getValue().getName());
-            }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
-
-            // Announce that these files are done
-            finishedFiles.entrySet().forEach(set -> {
-                TileFile tile = allTiles.get(set.getKey());
-                    executor.submit(() -> {
-                        // Read the objects from the file
-                        Collection<CandidateObject> candidates;
-                        try {
-                            candidates = readObjectsFromFile(tile);
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                        tile.setCandidates(candidates);
-                    });
             });
+        } else { // Experimental file listening and running
+            try {
+                // We need to listen for changes in the temp folder
+                veRunner.startWatchService(this.tempDirectory.toPath());
+                //Make a map of the original names and the expected names
+                LinkedHashMap<File, File> remainingFiles = allTiles.entrySet().stream().map(entry -> {
+                    File originalFile = entry.getKey();
+                    File expectedFile = entry.getValue().getLabelFile();
+                    return new AbstractMap.SimpleEntry<>(originalFile, expectedFile);
 
+                }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
 
-            // Remove them from the list of remaining files
-            remainingFiles = remainingFiles.entrySet().stream().filter( v -> !finishedFiles.containsKey(v.getKey())).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+                // The command above will run in a separate thread, now we can start listening for the files changing
+                while ( remainingFiles.size() > 0 ) {
+                    if( !veRunner.getProcess().isAlive() )  {
+                        // It's no longer running so check the exit code
+                        int exitValue = veRunner.getProcess().exitValue();
+                        if( exitValue != 0) {
+                            throw new CancellationException("Cellpose process exited with value " + exitValue + ". Please check output above for indications of the problem.");
+                        }
+                    }
+
+                    // Get the files that have changes
+                    List<String> changedFiles = veRunner.getChangedFiles();
+
+                    if( changedFiles.size() == 0 ) {
+                        continue;
+                    }
+                    // Find the tiles that corresponds to the changed files
+                    LinkedHashMap<File, File> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
+                        // Create a file that matches the mask name
+                        return changedFiles.contains(set.getValue().getName());
+                    }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+
+                    // Announce that these files are done
+                    finishedFiles.entrySet().forEach(set -> {
+                        TileFile tile = allTiles.get(set.getKey());
+                        executor.execute(() -> {
+                            // Read the objects from the file
+                            Collection<CandidateObject> candidates;
+                            try {
+                                candidates = readObjectsFromFile(tile);
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                            tile.setCandidates(candidates);
+                        });
+                    });
+                    // Remove them from the list of remaining files
+                    remainingFiles = remainingFiles.entrySet().stream().filter( v -> !finishedFiles.containsKey(v.getKey())).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+                }
+            } catch (IOException e) {
+                logger.error(e.getMessage(), e);
+            } finally {
+                veRunner.closeWatchService();
+            }
         }
+
 
         executor.shutdown();
         executor.awaitTermination(10, TimeUnit.MINUTES);

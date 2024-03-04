@@ -9,7 +9,10 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.file.*;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -92,11 +95,11 @@ public class VirtualEnvironmentRunner {
             case VENV:
                 switch (platform) {
                     case WINDOWS:
-                        cmd.addAll(Arrays.asList(new File(environmentNameOrPath, "Scripts/python").getAbsolutePath()));
+                        cmd.add(new File(environmentNameOrPath, "Scripts/python").getAbsolutePath());
                         break;
                     case UNIX:
                     case OSX:
-                        cmd.addAll(Arrays.asList(new File(environmentNameOrPath, "bin/python").getAbsolutePath()));
+                        cmd.add(new File(environmentNameOrPath, "bin/python").getAbsolutePath());
                         break;
                 }
                 break;
@@ -112,7 +115,7 @@ public class VirtualEnvironmentRunner {
     /**
      * This is the code you actually want to run after 'python'. For example adding {@code Arrays.asList("--version")}
      * should return the version of python that is being run.
-     * @param arguments
+     * @param arguments any cellpose or omnipose command line argument
      */
     public void setArguments(List<String> arguments) {
         this.arguments = arguments;
@@ -121,7 +124,6 @@ public class VirtualEnvironmentRunner {
     /**
      * This builds, runs the command and outputs it to the logger as it is being run
      *
-     * @return a string list containing the log of the command
      * @throws IOException          // In case there is an issue starting the process
      */
     public void runCommand() throws IOException {
@@ -220,7 +222,7 @@ public class VirtualEnvironmentRunner {
     }
 
     public List<String> getChangedFiles() throws InterruptedException {
-        WatchKey key = watchService.poll(1, TimeUnit.SECONDS);
+        WatchKey key = watchService.poll(100, TimeUnit.MICROSECONDS);
         if (key == null)
             return Collections.emptyList();
         List<WatchEvent<?>> events = key.pollEvents();
@@ -232,6 +234,6 @@ public class VirtualEnvironmentRunner {
     }
 
     public void closeWatchService() throws IOException {
-        watchService.close();
+        if (watchService != null ) watchService.close();
     }
 }

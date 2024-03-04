@@ -94,6 +94,8 @@ public class CellposeBuilder {
 
     private ImageOp extendChannelOp = null;
 
+    private boolean doReadResultsAsynchronously = false;
+
     /**
      * can create a cellpose builder from a serialized JSON version of this builder.
      *
@@ -159,6 +161,15 @@ public class CellposeBuilder {
      */
     public CellposeBuilder nThreads(int nThreads) {
         this.nThreads = nThreads;
+        return this;
+    }
+
+    /**
+     * Use an asynchronous method to read the results from the cellpose as it writes files
+     * Can result in faster processing. !!EXPERIMENTAL!!
+     */
+    public CellposeBuilder readResultsAsynchronously() {
+        this.doReadResultsAsynchronously = true;
         return this;
     }
 
@@ -401,7 +412,7 @@ public class CellposeBuilder {
      * Note that tiles are independently normalized, and therefore tiling can impact
      * the results. Default is 1024.
      *
-     * @param tileSize
+     * @param tileSize the width and height of each tile for exporting images
      * @return this builder
      */
     public CellposeBuilder tileSize(int tileSize) {
@@ -413,8 +424,8 @@ public class CellposeBuilder {
      * Note that tiles are independently normalized, and therefore tiling can impact
      * the results. Default is 1024.
      *
-     * @param tileWidth
-     * @param tileHeight
+     * @param tileWidth the width of each tile for exporting images
+     * @param tileHeight the height of each tile for exporting images
      * @return this builder
      */
     public CellposeBuilder tileSize(int tileWidth, int tileHeight) {
@@ -578,7 +589,7 @@ public class CellposeBuilder {
      * Explicitly set the cellpose channels manually. This corresponds to --chan and --chan2
      * @param channel1 --chan value passed to cellpose/omnipose
      * @param channel2 --chan2 value passed to cellpose/omnipose
-     * @return
+     * @return this builder
      */
     public CellposeBuilder cellposeChannels(Integer channel1, Integer channel2) {
         addParameter("chan", channel1.toString());
@@ -797,6 +808,7 @@ public class CellposeBuilder {
         cellpose.modelDirectory = modelDirectory;
         cellpose.groundTruthDirectory = groundTruthDirectory;
         cellpose.tempDirectory = tempDirectory;
+        cellpose.doReadResultsAsynchronously = doReadResultsAsynchronously;
 
         cellpose.extendChannelOp = extendChannelOp;
 
