@@ -1,9 +1,7 @@
 plugins {
     id 'java-library'
     id 'maven-publish'
-
     alias(libs.plugins.javafx)
-    id 'com.github.johnrengelman.shadow' version '7.0.0'
 }
 
 repositories {
@@ -30,8 +28,8 @@ description = 'QuPath extension to use Cellpose'
 version = "0.9.2-SNAPSHOT"
 
 dependencies {
-    shadow "io.github.qupath:qupath-gui-fx:${qupathVersion}"
-    shadow libs.qupath.fxtras
+    implementation "io.github.qupath:qupath-gui-fx:${qupathVersion}"
+    implementation libs.qupath.fxtras
     implementation "commons-io:commons-io:2.15.0"
     implementation libs.bundles.logging
 }
