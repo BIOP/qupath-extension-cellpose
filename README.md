@@ -1,3 +1,7 @@
+Zenodo DOI: [![DOI](https://zenodo.org/badge/417468733.svg)](https://zenodo.org/doi/10.5281/zenodo.10829243)
+
+
+
 # QuPath Cellpose/Omnipose extension
 
 This repo adds some support to use 2D Cellpose within QuPath through a Python virtual environment.
@@ -11,6 +15,41 @@ they can play nice.
 > [!WARNING]
 > Versions above v0.6.0 of this extension **will only work on QuPath 0.4.0 or later**. Please update QuPath to the latest version. 
 > In case you are stuck with QuPath v0.3.2, [the last release to work is v0.5.1](https://github.com/BIOP/qupath-extension-cellpose/releases/tag/v0.5.1)
+
+
+# Citing
+
+Please cite this extension by linking it to this GitHub or to the release you used, and feel free to give us a star ⭐️
+
+As this code is neither novel nor entirely original, there is no linked publication, but you can use the following Zenodo entry:
+
+[![DOI](https://zenodo.org/badge/417468733.svg)](https://zenodo.org/doi/10.5281/zenodo.10829243)
+
+## Code authorship
+**Author**: Olivier Burri (1)
+
+**Contributors**: Nicolas Chiaruttini (1), Romain Guiet (1)
+
+This code heavily makes use of functions created by Pete Bankhead and the QuPath team for their [StarDist Extension](https://github.com/qupath/qupath-extension-stardist)
+
+**Affiliations**
+
+(1) EPFL BioImaging and Optics Platform (BIOP)
+
+### If you use this extension, you should cite the following publications
+
+Stringer, C., Wang, T., Michaelos, M. et al **Cellpose: a generalist algorithm for cellular segmentation**. Nat Methods 18, 100–106 (2021). https://doi.org/10.1038/s41592-020-01018-x
+
+Pachitariu, M., Stringer, C. **Cellpose 2.0: how to train your own model**. Nat Methods 19, 1634–1641 (2022). https://doi.org/10.1038/s41592-022-01663-4
+
+Cutler, K.J., Stringer, C., Lo, T.W. et al. **Omnipose: a high-precision morphology-independent solution for bacterial cell segmentation**. Nat Methods 19, 1438–1448 (2022). https://doi.org/10.1038/s41592-022-01639-4
+
+Bankhead, P. et al. **QuPath: Open source software for digital pathology image analysis**. Scientific Reports (2017). https://doi.org/10.1038/s41598-017-17204-5
+
+
+
+
+
 
 # Installation
 
@@ -245,22 +284,6 @@ our current guidelines:
 In order to make the extension more flexible and less dependent on the builder, a new Builder method `addParameter(name, value)` is available that can take [any cellpose CLI argument or argument pair](https://cellpose.readthedocs.io/en/latest/command.html#options). 
 For this to work, some elements that were "hard coded" on the builder have been removed, so you will get some errors. For example: `excludeEdges()` and `clusterDBSCAN()` no longer exist. 
 You can use `addParameter("exclude_on_edges")`, and `addParameter("cluster")` instead.
-
-# Citing
-
-Please cite this extension by linking it to this GitHub or to the release you used, and feel free to give us a star ⭐️
-
-If you use this extension, you should cite the following publications
-
-Stringer, C., Wang, T., Michaelos, M. et al **Cellpose: a generalist algorithm for cellular segmentation**. Nat Methods 18, 100–106 (2021). https://doi.org/10.1038/s41592-020-01018-x
-
-Pachitariu, M., Stringer, C. **Cellpose 2.0: how to train your own model**. Nat Methods 19, 1634–1641 (2022). https://doi.org/10.1038/s41592-022-01663-4
-
-Cutler, K.J., Stringer, C., Lo, T.W. et al. **Omnipose: a high-precision morphology-independent solution for bacterial cell segmentation**. Nat Methods 19, 1438–1448 (2022). https://doi.org/10.1038/s41592-022-01639-4
-
-Bankhead, P. et al. **QuPath: Open source software for digital pathology image analysis**. Scientific Reports (2017).
-https://doi.org/10.1038/s41598-017-17204-5
-
 
 # Building
 
