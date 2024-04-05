@@ -79,16 +79,21 @@ public class VirtualEnvironmentRunner {
 
         Platform platform = Platform.getCurrent();
         List<String> cmd = new ArrayList<>();
+        String cond_path;
 
         switch (envType) {
             case CONDA:
                 switch (platform) {
                     case WINDOWS:
-                        cmd.addAll(Arrays.asList("CALL", "conda.bat", "activate", environmentNameOrPath, "&", "python"));
+                        // Adjust path to the folder with the env name
+                        cond_path = new File(environmentNameOrPath).getParent();
+                        cmd.addAll(Arrays.asList("CALL", "conda.bat", "activate", cond_path, "&", "python"));
                         break;
                     case UNIX:
                     case OSX:
-                        cmd.addAll(Arrays.asList("conda", "activate", environmentNameOrPath, ";", "python"));
+                        // Adjust path to the folder with the env name
+                        cond_path = new File(environmentNameOrPath).getParentFile().getParent();
+                        cmd.addAll(Arrays.asList("conda", "activate", cond_path, ";", "python"));
                         break;
                 }
                 break;
