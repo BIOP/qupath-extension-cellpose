@@ -109,6 +109,7 @@ public class Cellpose2D {
     private final static Logger logger = LoggerFactory.getLogger(Cellpose2D.class);
 
     public ImageOp extendChannelOp;
+    public boolean useGPU;
 
     protected double simplifyDistance = 1.4;
 
@@ -746,7 +747,7 @@ public class Cellpose2D {
 
         cellposeArguments.add("--no_npy");
 
-        cellposeArguments.add("--use_gpu");
+        if( this.useGPU ) cellposeArguments.add("--use_gpu");
 
         cellposeArguments.add("--verbose");
 
