@@ -754,7 +754,7 @@ public class Cellpose2D {
         veRunner.setArguments(cellposeArguments);
 
         // Finally, we can run Cellpose
-        veRunner.runCommand();
+        veRunner.runCommand(false);
 
         return processCellposeFiles(veRunner, allTiles);
 
@@ -926,10 +926,7 @@ public class Cellpose2D {
         veRunner.setArguments(cellposeArguments);
 
         // Finally, we can run Cellpose
-        veRunner.runCommand();
-
-        // Wait for the process to finish
-        veRunner.getProcess().waitFor();
+        veRunner.runCommand(true);
 
         // Get the log
         this.theLog = veRunner.getProcessLog();
@@ -990,7 +987,8 @@ public class Cellpose2D {
 
         qcRunner.setArguments(qcArguments);
 
-        qcRunner.runCommand();
+        qcRunner.runCommand(true);
+
 
         // The results are stored in the validation directory, open them as a results table
         File qcResults = new File( getValidationDirectory(), "QC-Results" + File.separator + "Quality_Control for " + this.modelFile.getName() + ".csv");

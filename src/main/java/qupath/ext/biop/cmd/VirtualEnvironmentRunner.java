@@ -123,10 +123,10 @@ public class VirtualEnvironmentRunner {
 
     /**
      * This builds, runs the command and outputs it to the logger as it is being run
-     *
+     * @param wait whether to wait for the process to end or not before exiting this command
      * @throws IOException          // In case there is an issue starting the process
      */
-    public void runCommand() throws IOException {
+    public void runCommand(boolean waitUntilDone) throws IOException {
 
         // Get how to start the command, based on the VENV Type
         List<String> command = getActivationCommand();
@@ -207,6 +207,15 @@ public class VirtualEnvironmentRunner {
 
 
         logger.info("Virtual Environment Runner Started");
+
+        // If we ask to wait, let's wait directly here rather than handle it outside
+        if(waitUntilDone) {
+            try {
+                this.process.waitFor();
+            } catch (InterruptedException e) {
+                logger.error(e.getMessage());
+            }
+        }
     }
 
     public Process getProcess() {
