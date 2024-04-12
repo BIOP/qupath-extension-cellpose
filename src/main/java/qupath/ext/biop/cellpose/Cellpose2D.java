@@ -413,6 +413,11 @@ public class Cellpose2D {
 
         logger.info("All tiles and objects read, now resolving overlaps");
 
+        // In case alltiles is null, we are basically done
+        if( allTiles == null ) {
+            logger.info("No results from Cellpose", "There is nothing to recover from cellpose");
+        }
+
         // Group the candidates per parent object, as this is needed to optimize when checking for overlap
         Map<PathObject, List<CandidateObject>> candidatesPerParent = allTiles.values().stream()
                 .flatMap(t -> t.getCandidates().stream())
@@ -762,10 +767,17 @@ public class Cellpose2D {
 
     private LinkedHashMap<File, TileFile> processCellposeFiles(VirtualEnvironmentRunner veRunner, LinkedHashMap<File, TileFile> allTiles) throws CancellationException, InterruptedException, IOException {
 
+        // Make sure that allTiles is not null, if it is, just return null
+        // as we are likely just running validation and thus do not need to give any results back
+        if (allTiles == null ) {
+            veRunner.getProcess().waitFor();
+            return null;
+        }
+
         // Build a thread pool to process reading the images in parallel
         ExecutorService executor = Executors.newFixedThreadPool(5);
 
-        if (!this.doReadResultsAsynchronously || allTiles == null) {
+        if (!this.doReadResultsAsynchronously) {
             // We need to wait for the process to finish
             veRunner.getProcess().waitFor();
             allTiles.entrySet().forEach(entry -> {
