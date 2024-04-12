@@ -1182,18 +1182,18 @@ public class Cellpose2D {
         if (annotations.isEmpty()) {
             return;
         }
-        int downsample = 1;
+        double downsample;
         if (Double.isFinite(pixelSize) && pixelSize > 0) {
-            downsample = (int) Math.round(pixelSize / originalServer.getPixelCalibration().getAveragedPixelSize().doubleValue());
+            downsample = pixelSize / originalServer.getPixelCalibration().getAveragedPixelSize().doubleValue();
+        } else {
+            downsample = 1.0;
         }
-
         AtomicInteger idx = new AtomicInteger();
-        int finalDownsample = downsample;
 
         annotations.forEach(a -> {
             int i = idx.getAndIncrement();
 
-            RegionRequest request = RegionRequest.createInstance(originalServer.getPath(), finalDownsample, a.getROI());
+            RegionRequest request = RegionRequest.createInstance(originalServer.getPath(), downsample, a.getROI());
             File imageFile = new File(saveDirectory, imageName + "_region_" + i + ".tif");
             File maskFile = new File(saveDirectory, imageName + "_region_" + i + "_masks.tif");
             try {
