@@ -1058,20 +1058,25 @@ public class Cellpose2D {
 
         if (this.theLog != null) {
             // Try to parse the output of Cellpose to give meaningful information to the user. This is very old school
-            // Look for "Epoch 0, Time  2.3s, Loss 1.0758, Loss Test 0.6007, LR 0.2000"
-            String epochPattern = ".*Epoch\\s*(\\d+),\\s*Time\\s*(\\d+\\.\\d)s,\\s*Loss\\s*(\\d+\\.\\d+),\\s*Loss Test\\s*(\\d+\\.\\d+),\\s*LR\\s*(\\d+\\.\\d+).*";
-            // Build Matcher
-            Pattern pattern = Pattern.compile(epochPattern);
-            Matcher m;
             for (String line : this.theLog) {
-                m = pattern.matcher(line);
-                if (m.find()) {
-                    trainingResults.incrementCounter();
-                    trainingResults.addValue("Epoch", Double.parseDouble(m.group(1)));
-                    trainingResults.addValue("Time[s]", Double.parseDouble(m.group(2)));
-                    trainingResults.addValue("Loss", Double.parseDouble(m.group(3)));
-                    trainingResults.addValue("Loss Test", Double.parseDouble(m.group(4)));
-                    trainingResults.addValue("LR", Double.parseDouble(m.group(5)));
+                Matcher m;
+                for (LogParser parser : LogParser.values()) {
+                    m = parser.getPattern().matcher(line);
+                    if (m.find()) {
+                        trainingResults.incrementCounter();
+                        trainingResults.addValue("Epoch", Double.parseDouble(m.group("epoch")));
+                        trainingResults.addValue("Time", Double.parseDouble(m.group("time")));
+                        trainingResults.addValue("Loss", Double.parseDouble(m.group("loss")));
+                        if (parser != LogParser.OMNI) { // Omnipose does not provide validation loss
+                            trainingResults.addValue("Validation Loss", Double.parseDouble(m.group("val")));
+                            trainingResults.addValue("LR", Double.parseDouble(m.group("lr")));
+
+                        } else {
+                            trainingResults.addValue("Validation Loss", Double.NaN);
+                            trainingResults.addValue("LR", Double.NaN);
+
+                        }
+                    }
                 }
             }
         }
@@ -1115,7 +1120,7 @@ public class Cellpose2D {
         //populating the series with data
         for (int i = 0; i < output.getCounter(); i++) {
             loss.getData().add(new XYChart.Data<>(output.getValue("Epoch", i), output.getValue("Loss", i)));
-            lossTest.getData().add(new XYChart.Data<>(output.getValue("Epoch", i), output.getValue("Loss Test", i)));
+            lossTest.getData().add(new XYChart.Data<>(output.getValue("Epoch", i), output.getValue("Validation Loss", i)));
 
         }
         lineChart.getData().add(loss);
@@ -1434,5 +1439,26 @@ public class Cellpose2D {
             }
             geometry = geometry.getGeometryN(index);
         }
+    }
+    public enum LogParser {
+
+        // Cellpose 2 pattern when training : "Look for "Epoch 0, Time  2.3s, Loss 1.0758, Loss Test 0.6007, LR 0.2000"
+        // Cellpose 3 pattern when training : "5, train_loss=2.6546, test_loss=2.0054, LR=0.1111, time 2.56s"
+        // Omnipose pattern when training   : "Train epoch: 10 | Time: 0.22min | last epoch: 0.74s | <sec/epoch>: 0.73s | <sec/batch>: 0.33s | <Batch Loss>: 5.076259 | <Epoch Loss>: 4.429341"
+        // WARNING: Currently Omnipose does not provide any output to the validation loss (Test loss in Cellpose)
+        CP2("Cellpose v2", ".*Epoch\\s*(?<epoch>\\d+),\\s*Time\\s*(?<time>\\d+\\.\\d)s,\\s*Loss\\s*(?<loss>\\d+\\.\\d+),\\s*Loss Test\\s*(?<val>\\d+\\.\\d+),\\s*LR\\s*(?<lr>\\d+\\.\\d+).*"),
+        CP3( "Cellpose v3", ".* (?<epoch>\\d+), train_loss=(?<loss>\\d+\\.\\d+), test_loss=(?<val>\\d+\\.\\d+), LR=(?<lr>\\d+\\.\\d+), time (?<time>\\d+\\.\\d+)s.*"),
+        OMNI("Omnipose", ".*Train epoch: (?<epoch>\\d+) \\| Time: (?<time>\\d+\\.\\d+)min .*\\<Epoch Loss\\>: (?<loss>\\d+\\.\\d+).*");
+
+        private final String name;
+        private final Pattern pattern;
+
+        LogParser(String name, String regex) {
+            this.name = name;
+            this.pattern = Pattern.compile(regex);
+        }
+
+        public String getName() {return this.name;}
+        public Pattern getPattern() {return this.pattern;}
     }
 }
