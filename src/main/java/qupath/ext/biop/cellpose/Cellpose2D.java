@@ -1274,9 +1274,9 @@ public class Cellpose2D {
                     if (fullPreprocess.size() > 1)
                         fullPreprocess.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
 
-                    op = op.appendOps(fullPreprocess.toArray(ImageOp[]::new));
+                    var opWithPreprocessing = op.appendOps(fullPreprocess.toArray(ImageOp[]::new));
 
-                    ImageServer<BufferedImage> processed = ImageOps.buildServer(imageData, op, resolution, tileWidth, tileHeight);
+                    ImageServer<BufferedImage> processed = ImageOps.buildServer(imageData, opWithPreprocessing, resolution, tileWidth, tileHeight);
 
                     LabeledImageServer labelServer = new LabeledImageServer.Builder(imageData)
                             .backgroundLabel(0, ColorTools.BLACK)
