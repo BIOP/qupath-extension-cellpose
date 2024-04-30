@@ -727,12 +727,15 @@ public class Cellpose2D {
      */
     private LinkedHashMap<File, TileFile> runCellpose(LinkedHashMap<File, TileFile> allTiles) throws InterruptedException, IOException {
 
-
+        // Need to define the name of the command we are running. We used to be able to use 'cellpose' for both but not since Cellpose v2
         String runCommand = this.parameters.containsKey("omni") ? "omnipose" : "cellpose";
         VirtualEnvironmentRunner veRunner = getVirtualEnvironmentRunner();
 
         // This is the list of commands after the 'python' call
-        List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-W", "ignore", "-m", runCommand));
+        // We want to ignore all warnings to make sure the log is clean (-W ignore)
+        // We want to be able to call the module by name (-m)
+        // We want to make sure UTF8 mode is by default (-X utf8)
+        List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-Xutf8", "-W", "ignore", "-m", runCommand));
 
         cellposeArguments.add("--dir");
         cellposeArguments.add("" + this.tempDirectory);
@@ -906,7 +909,7 @@ public class Cellpose2D {
         VirtualEnvironmentRunner veRunner = getVirtualEnvironmentRunner();
 
         // This is the list of commands after the 'python' call
-        List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-W", "ignore", "-m", runCommand));
+        List<String> cellposeArguments = new ArrayList<>(Arrays.asList( "-Xutf8", "-W", "ignore", "-m", runCommand));
 
         cellposeArguments.add("--train");
 
@@ -930,8 +933,8 @@ public class Cellpose2D {
             }
         });
 
-
-        cellposeArguments.add("--use_gpu");
+        // Some people may deactivate this...
+        if( this.useGPU ) cellposeArguments.add("--use_gpu");
 
         cellposeArguments.add("--verbose");
 
@@ -1364,6 +1367,7 @@ public class Cellpose2D {
             }
         }
         // Ignore the IDs, because they will be the same across different images, and we don't really need them
+        if(candidates.isEmpty()) return Collections.emptyList();
         return candidates.values();
     }
 

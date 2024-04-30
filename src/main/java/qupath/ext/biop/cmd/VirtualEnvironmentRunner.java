@@ -28,7 +28,7 @@ public class VirtualEnvironmentRunner {
     private final EnvType envType;
     private WatchService watchService;
     private String name;
-    private String environmentNameOrPath;
+    private String pythonPath;
 
     private List<String> arguments;
 
@@ -61,7 +61,7 @@ public class VirtualEnvironmentRunner {
     }
 
     public VirtualEnvironmentRunner(String environmentNameOrPath, EnvType type, String name) {
-        this.environmentNameOrPath = environmentNameOrPath;
+        this.pythonPath = environmentNameOrPath;
         this.envType = type;
         this.name = name;
         if (envType.equals(EnvType.OTHER))
@@ -84,27 +84,29 @@ public class VirtualEnvironmentRunner {
             case CONDA:
                 switch (platform) {
                     case WINDOWS:
-                        cmd.addAll(Arrays.asList("CALL", "conda.bat", "activate", environmentNameOrPath, "&", "python"));
+                        // Adjust path to the folder with the env name based on the python location. On Windows it's at the root of the environment
+                        cmd.addAll(Arrays.asList("CALL", "conda.bat", "activate", new File(pythonPath).getParent(), "&", "python"));
                         break;
                     case UNIX:
                     case OSX:
-                        cmd.addAll(Arrays.asList("conda", "activate", environmentNameOrPath, ";", "python"));
+                        // Adjust path to the folder with the env name based on the python location. In Linux/MacOS it's in the 'bin' sub folder
+                        cmd.addAll(Arrays.asList("conda", "activate", new File(pythonPath).getParentFile().getParent(), ";", "python"));
                         break;
                 }
                 break;
             case VENV:
                 switch (platform) {
                     case WINDOWS:
-                        cmd.add(new File(environmentNameOrPath, "Scripts/python").getAbsolutePath());
+                        cmd.add(new File(pythonPath, "Scripts/python").getAbsolutePath());
                         break;
                     case UNIX:
                     case OSX:
-                        cmd.add(new File(environmentNameOrPath, "bin/python").getAbsolutePath());
+                        cmd.add(new File(pythonPath, "bin/python").getAbsolutePath());
                         break;
                 }
                 break;
             case EXE:
-                cmd.add(environmentNameOrPath);
+                cmd.add(pythonPath);
                 break;
             case OTHER:
                 return null;
@@ -123,8 +125,8 @@ public class VirtualEnvironmentRunner {
 
     /**
      * This builds, runs the command and outputs it to the logger as it is being run
-     * @param wait whether to wait for the process to end or not before exiting this command
-     * @throws IOException          // In case there is an issue starting the process
+     * @param waitUntilDone whether to wait for the process to end or not before exiting this method
+     * @throws IOException  in case there is an issue with the process
      */
     public void runCommand(boolean waitUntilDone) throws IOException {
 
