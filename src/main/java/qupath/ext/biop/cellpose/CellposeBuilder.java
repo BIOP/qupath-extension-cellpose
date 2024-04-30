@@ -95,6 +95,7 @@ public class CellposeBuilder {
     private ImageOp extendChannelOp = null;
 
     private boolean doReadResultsAsynchronously = false;
+    private boolean useGPU = true;
 
     /**
      * can create a cellpose builder from a serialized JSON version of this builder.
@@ -134,9 +135,20 @@ public class CellposeBuilder {
 
     }
 
+    /**
+     * overwrite use GPU
+     * @param useGPU add or remove the option
+     * @return this builder
+     */
+    public CellposeBuilder useGPU( boolean useGPU ) {
+        this.useGPU = useGPU;
+
+        return this;
+    }
 
     /**
      * Specify the training directory
+     *
      */
     public CellposeBuilder groundTruthDirectory(File groundTruthDirectory) {
         this.groundTruthDirectory = groundTruthDirectory;
@@ -770,6 +782,8 @@ public class CellposeBuilder {
 
         // Give it the number of threads to use
         cellpose.nThreads = nThreads;
+
+        cellpose.useGPU = useGPU;
 
         // Check the model. If it is a file, then it is a custom model
         File file = new File(this.modelNameOrPath);
