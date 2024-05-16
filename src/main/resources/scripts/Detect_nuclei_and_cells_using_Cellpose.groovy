@@ -1,5 +1,4 @@
-package scripts
-/* Last tested on QuPath-0.3.2
+/* Last tested on QuPath-0.5.1
  * 
  * This scripts requires qupath-extension-cellpose 
  * cf https://github.com/BIOP/qupath-extension-cellpose
@@ -27,7 +26,6 @@ def cellpose_cyto = Cellpose2D.builder( pathModel_cyto )
         .diameter(30)                  // Median object diameter. Set to 0.0 for the `bact_omni` model or for automatic computation
         .measureShape()                // Add shape measurements
         .measureIntensity()            // Add cell measurements (in all compartments) 
-        .useGPU()
         .build()
 
 def pathModel_nuc = 'cyto2'
@@ -35,7 +33,6 @@ def cellpose_nuc = Cellpose2D.builder( pathModel_nuc )
         .channels("DAPI")
         .pixelSize( 0.3 )              // Resolution for detection
         .diameter(10)                  // Median object diameter. Set to 0.0 for the `bact_omni` model or for automatic computation
-        .useGPU()
         .build()
 
 // Run detection for the selected pathObjects and store resulting detections
