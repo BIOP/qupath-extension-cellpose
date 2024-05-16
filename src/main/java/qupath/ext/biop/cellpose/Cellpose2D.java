@@ -703,20 +703,28 @@ public class Cellpose2D {
      * @return the virtual environment runner that can run the desired command
      */
     private VirtualEnvironmentRunner getVirtualEnvironmentRunner() {
-        // Need to decide whether to call cellpose or omnipose
-        VirtualEnvironmentRunner veRunner;
 
         // Make sure that cellposeSetup.getCellposePythonPath() is not empty
-        if (cellposeSetup.getCellposePytonPath().isEmpty()) {
+        if (cellposeSetup.getCellposePythonPath().isEmpty()) {
             throw new IllegalStateException("Cellpose python path is empty. Please set it in Edit > Preferences");
         }
 
-        if (this.parameters.containsKey("omni") && !cellposeSetup.getOmniposePytonPath().isEmpty()) {
-            veRunner = new VirtualEnvironmentRunner(cellposeSetup.getOmniposePytonPath(), VirtualEnvironmentRunner.EnvType.EXE, this.getClass().getSimpleName());
-        } else {
-            veRunner = new VirtualEnvironmentRunner(cellposeSetup.getCellposePytonPath(), VirtualEnvironmentRunner.EnvType.EXE, this.getClass().getSimpleName());
+        // Change the envType based on the setup options
+        VirtualEnvironmentRunner.EnvType type = VirtualEnvironmentRunner.EnvType.EXE;
+        String condaPath = null;
+        if( !cellposeSetup.getCondaPath().isEmpty()) {
+            type = VirtualEnvironmentRunner.EnvType.CONDA;
+            condaPath = cellposeSetup.getCondaPath();
         }
-        return veRunner;
+
+        // Set python executable to switch between onminpose and cellpose
+        String pythonPath = cellposeSetup.getCellposePythonPath();
+        if (this.parameters.containsKey("omni") && !cellposeSetup.getOmniposePythonPath().isEmpty())
+            pythonPath = cellposeSetup.getOmniposePythonPath();
+
+
+        return new VirtualEnvironmentRunner(pythonPath, type, condaPath, this.getClass().getSimpleName());
+
     }
 
     /**

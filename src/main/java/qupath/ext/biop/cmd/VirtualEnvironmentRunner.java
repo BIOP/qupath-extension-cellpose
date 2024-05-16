@@ -26,6 +26,9 @@ import java.util.stream.Collectors;
 public class VirtualEnvironmentRunner {
     private final static Logger logger = LoggerFactory.getLogger(VirtualEnvironmentRunner.class);
     private final EnvType envType;
+
+    private final String condaPath;
+
     private WatchService watchService;
     private String name;
     private String pythonPath;
@@ -61,9 +64,14 @@ public class VirtualEnvironmentRunner {
     }
 
     public VirtualEnvironmentRunner(String environmentNameOrPath, EnvType type, String name) {
+        this(environmentNameOrPath, type, null, name );
+    }
+
+    public VirtualEnvironmentRunner(String environmentNameOrPath, EnvType type, String condaPath, String name) {
         this.pythonPath = environmentNameOrPath;
         this.envType = type;
         this.name = name;
+        this.condaPath = condaPath;
         if (envType.equals(EnvType.OTHER))
             logger.error("Environment is unknown, please set the environment type to something different than 'Other'");
     }
@@ -79,18 +87,25 @@ public class VirtualEnvironmentRunner {
 
         Platform platform = Platform.getCurrent();
         List<String> cmd = new ArrayList<>();
+        String condaCommand = this.condaPath;
 
         switch (envType) {
             case CONDA:
                 switch (platform) {
                     case WINDOWS:
+                        if( condaCommand == null ) {
+                            condaCommand = "conda.bat";
+                        }
                         // Adjust path to the folder with the env name based on the python location. On Windows it's at the root of the environment
-                        cmd.addAll(Arrays.asList("CALL", "conda.bat", "activate", new File(pythonPath).getParent(), "&", "python"));
+                        cmd.addAll(Arrays.asList("CALL", condaCommand, "activate", new File(pythonPath).getParent(), "&", "python"));
                         break;
                     case UNIX:
                     case OSX:
+                        if( condaCommand == null ) {
+                            condaCommand = "conda";
+                        }
                         // Adjust path to the folder with the env name based on the python location. In Linux/MacOS it's in the 'bin' sub folder
-                        cmd.addAll(Arrays.asList("conda", "activate", new File(pythonPath).getParentFile().getParent(), ";", "python"));
+                        cmd.addAll(Arrays.asList(condaCommand, "activate", new File(pythonPath).getParentFile().getParent(), ";", "python"));
                         break;
                 }
                 break;

@@ -67,15 +67,19 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         // Create the options we need
         StringProperty cellposePath = PathPrefs.createPersistentPreference("cellposePythonPath", "");
         StringProperty omniposePath = PathPrefs.createPersistentPreference("omniposePythonPath", "");
+        StringProperty condaPath = PathPrefs.createPersistentPreference("condaPath", "");
 
 
         //Set options to current values
-        options.setCellposePytonPath(cellposePath.get());
-        options.setOmniposePytonPath(omniposePath.get());
+        options.setCellposePythonPath(cellposePath.get());
+        options.setOmniposePythonPath(omniposePath.get());
+        options.setCondaPath(condaPath.get());
 
         // Listen for property changes
-        cellposePath.addListener((v, o, n) -> options.setCellposePytonPath(n));
-        omniposePath.addListener((v, o, n) -> options.setOmniposePytonPath(n));
+        cellposePath.addListener((v, o, n) -> options.setCellposePythonPath(n));
+        omniposePath.addListener((v, o, n) -> options.setOmniposePythonPath(n));
+        condaPath.addListener((v, o, n) -> options.setCondaPath(n));
+
 
         PropertySheet.Item cellposePathItem = new PropertyItemBuilder<>(cellposePath, String.class)
                 .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
@@ -91,8 +95,15 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
                 .description("Enter the full path to your omnipose environment, including 'python.exe'")
                 .build();
 
+        PropertySheet.Item condaPathItem = new PropertyItemBuilder<>(condaPath, String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
+                .name("'Conda' script location (optional)")
+                .category("Cellpose/Omnipose")
+                .description("The full path to you conda/mamba command, in case you want the extension to use the 'conda activate' command.\ne.g 'C:\\ProgramData\\Miniconda3\\condabin\\mamba.bat'")
+                .build();
+
         // Add Permanent Preferences and Populate Preferences
-        QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems().addAll(cellposePathItem, omniposePathItem);
+        QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems().addAll(cellposePathItem, omniposePathItem, condaPathItem);
 
     }
 

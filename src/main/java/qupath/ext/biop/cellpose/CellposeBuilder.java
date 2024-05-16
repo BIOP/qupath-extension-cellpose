@@ -581,7 +581,7 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder useOmnipose() {
-        if (cellposeSetup.getOmniposePytonPath() == "")
+        if (cellposeSetup.getOmniposePythonPath() == "")
             logger.warn("Omnipose environment path not set. Using cellpose path instead.");
         addParameter("omni");
         return this;
