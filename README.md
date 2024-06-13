@@ -197,6 +197,9 @@ def cellpose = Cellpose2D.builder( pathModel )
 A QuPath project with rectangles of class "Training" and "Validation" inside which the ground truth objects have been painted as annotations with no class.
 ![Example Annotations for Training](files/cellpose-qupath-training-example.png)
 
+> [!IMPORTANT]
+> Training requires _dense_ annotations. This means you cannot just annotate a few objects per Training and Valudation rectanble. You must annotate **ALL relevant objects** within each of those regions!
+
 We typically create a standalone QuPath project for training only. This project will contain the training images along with the ground truth annotations drawn in QuPath.
 Here are some reasons we do it this way:
 
