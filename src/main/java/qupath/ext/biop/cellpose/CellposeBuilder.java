@@ -67,7 +67,7 @@ public class CellposeBuilder {
     // Cellpose Related Options
     private String modelNameOrPath;
     // Cellpose Training options
-    private File modelDirectory = null;
+    private transient File modelDirectory = null;
     // QuPath Object handling options
     private ColorTransform[] channels = new ColorTransform[0];
     private Double cellExpansion = Double.NaN;
@@ -89,13 +89,14 @@ public class CellposeBuilder {
     private TileOpCreator globalPreprocessing;
     private int nThreads = -1;
 
-    private File tempDirectory = null;
-    private File groundTruthDirectory = null;
+    private transient File tempDirectory = null;
+    private transient File groundTruthDirectory = null;
 
     private ImageOp extendChannelOp = null;
 
     private boolean doReadResultsAsynchronously = false;
     private boolean useGPU = true;
+    private String outputModelName;
 
     /**
      * can create a cellpose builder from a serialized JSON version of this builder.
@@ -759,7 +760,7 @@ public class CellposeBuilder {
         // Deactivate cellpose normalization
         this.noCellposeNormalization();
 
-        // Add this operation the the preprocessing
+        // Add this operation to the preprocessing
         return this.preprocess(normOp);
     }
 
@@ -772,6 +773,10 @@ public class CellposeBuilder {
         return this.addParameter("no_norm");
     }
 
+    public CellposeBuilder setOutputModelName(String outputName) {
+        this.outputModelName = outputName;
+        return this;
+    }
     /**
      * Create a {@link Cellpose2D}, all ready for detection.
      *
@@ -812,13 +817,10 @@ public class CellposeBuilder {
 
         if (this.modelDirectory == null) {
             this.modelDirectory = new File(quPathProjectDir, "models");
+            this.modelDirectory.mkdirs();
         }
 
-        // Define training and validation directories inside the QuPath Project
-        File trainDirectory = new File(groundTruthDirectory, "train");
-        File valDirectory = new File(groundTruthDirectory, "test");
-
-
+        cellpose.outputModelName = outputModelName;
         cellpose.modelDirectory = modelDirectory;
         cellpose.groundTruthDirectory = groundTruthDirectory;
         cellpose.tempDirectory = tempDirectory;
@@ -851,6 +853,7 @@ public class CellposeBuilder {
         cellpose.constrainToParent = constrainToParent;
         cellpose.creatorFun = creatorFun;
         cellpose.globalPathClass = globalPathClass;
+        cellpose.outputModelName = outputModelName;
 
         cellpose.compartments = new LinkedHashSet<>(compartments);
 
@@ -869,9 +872,9 @@ public class CellposeBuilder {
                     cellpose.overlap = 30 * 2;
                     logger.info("Tile overlap was not set and diameter was set to {}. Will default to {} pixels overlap. Use `.setOverlap( int )` to modify overlap", diameter, cellpose.overlap);
                 } else {
+                    cellpose.overlap = (int) (diameter * 2);
+                    logger.info("Tile overlap was not set, but diameter exists. Using provided diameter {} x 2: {} pixels overlap", diameter, cellpose.overlap);
                 }
-                cellpose.overlap = (int) (diameter * 2);
-                logger.info("Tile overlap was not set, but diameter exists. Using provided diameter {} x 2: {} pixels overlap", diameter, cellpose.overlap);
             } else { // Nothing was set, let's get lucky
                 cellpose.overlap = 30 * 2;
                 logger.info("Neither diameter nor overlap provided. Overlap defaulting to {} pixels. Use `.setOverlap( int )` to modify overlap", cellpose.overlap);
