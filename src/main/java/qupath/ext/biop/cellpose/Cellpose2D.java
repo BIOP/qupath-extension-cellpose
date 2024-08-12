@@ -1004,7 +1004,7 @@ public class Cellpose2D {
         this.tempDirectory = getValidationDirectory();
 
         String tmpModel = this.model;
-        this.model = modelFile.getAbsolutePath();
+        this.model = this.modelFile.getAbsolutePath();
 
         try {
             runCellpose(null);

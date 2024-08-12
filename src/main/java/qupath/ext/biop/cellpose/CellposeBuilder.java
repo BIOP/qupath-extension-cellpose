@@ -773,6 +773,12 @@ public class CellposeBuilder {
         return this.addParameter("no_norm");
     }
 
+    /**
+     * Set the final model name. Setting this to "My Model" would lead to the final cellpose file being called
+     * "My Model_yyyy-MM-dd_HH_mm.cpm" with the current timestamp and .cpm meaning Cellpose Model
+     * @param outputName the prefix os the cellpose model name
+     * @return this builder
+     */
     public CellposeBuilder setOutputModelName(String outputName) {
         this.outputModelName = outputName;
         return this;
