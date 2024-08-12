@@ -31,7 +31,6 @@ import org.apache.commons.io.FilenameUtils;
 import org.bytedeco.opencv.opencv_core.Mat;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
-import org.locationtech.jts.geom.GeometryCollection;
 import org.locationtech.jts.index.strtree.STRtree;
 import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
@@ -73,6 +72,8 @@ import java.awt.image.BufferedImage;
 import java.awt.image.RenderedImage;
 import java.io.File;
 import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -110,6 +111,7 @@ public class Cellpose2D {
 
     public ImageOp extendChannelOp;
     public boolean useGPU;
+    public String outputModelName;
 
     protected double simplifyDistance = 1.4;
 
@@ -354,7 +356,7 @@ public class Cellpose2D {
                     parent.getROI());
 
 
-            Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileWidth * finalDownsample)), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileHeight * finalDownsample)), true, (int) (overlap * finalDownsample));
+            Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileWidth * finalDownsample)), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample * 1.5), (int) (tileHeight * finalDownsample * 1.5)), true, (int) (overlap * finalDownsample));
 
             List<RegionRequest> tiles = rois.stream().map(r -> RegionRequest.createInstance(opServer.getPath(), opServer.getDownsampleForResolution(0), r)).toList();
 
@@ -405,18 +407,12 @@ public class Cellpose2D {
         // Here the files are saved, and we can run cellpose to recover the masks
 
         try {
-            allTiles = runCellpose(allTiles);
+            runCellpose(allTiles);
         } catch (IOException | InterruptedException e) {
             logger.error("Failed to Run Cellpose", e);
             return;
         }
 
-        logger.info("All tiles and objects read, now resolving overlaps");
-
-        // In case alltiles is null, we are basically done
-        if( allTiles == null ) {
-            logger.info("No results from Cellpose", "There is nothing to recover from cellpose");
-        }
 
         // Group the candidates per parent object, as this is needed to optimize when checking for overlap
         Map<PathObject, List<CandidateObject>> candidatesPerParent = allTiles.values().stream()
@@ -620,6 +616,7 @@ public class Cellpose2D {
 
                 // If we have an overlap, try to keep the largest object
                 try {
+                    /*
                     var env = envelopes.get(overlappingCandidate);
                     if (envelope.intersects(env) && currentCandidate.geometry.intersects(overlappingCandidate.geometry)) {
                         // Retain the nucleus only if it is not fragmented, or less than half its original area
@@ -648,9 +645,13 @@ public class Cellpose2D {
                             skippedObjects.add(overlappingCandidate);
                         }
                     }
-                } catch (Exception e) {
+                    */
                     skippedObjects.add(overlappingCandidate);
+
+                } catch (Exception e) {
                     skipErrorCount++;
+                    skippedObjects.add(overlappingCandidate);
+
                 }
 
             }
@@ -692,7 +693,12 @@ public class Cellpose2D {
                         "_z" + request.getZ() +
                         "_t" + request.getT() + ".tif");
         logger.info("Saving to {}", tempFile);
-        IJ.save(imp, tempFile.getAbsolutePath());
+        // Add check if image is too small, do not process it!
+        if( imp.getWidth() < 10 || imp.getHeight() < 10 ) {
+                logger.warn("Image {} will not be saved as it is too small: {}", tempFile, imp);
+        } else {
+            IJ.save(imp, tempFile.getAbsolutePath());
+        }
 
         return new TileFile(request, tempFile, parent);
     }
@@ -703,20 +709,28 @@ public class Cellpose2D {
      * @return the virtual environment runner that can run the desired command
      */
     private VirtualEnvironmentRunner getVirtualEnvironmentRunner() {
-        // Need to decide whether to call cellpose or omnipose
-        VirtualEnvironmentRunner veRunner;
 
         // Make sure that cellposeSetup.getCellposePythonPath() is not empty
-        if (cellposeSetup.getCellposePytonPath().isEmpty()) {
+        if (cellposeSetup.getCellposePythonPath().isEmpty()) {
             throw new IllegalStateException("Cellpose python path is empty. Please set it in Edit > Preferences");
         }
 
-        if (this.parameters.containsKey("omni") && !cellposeSetup.getOmniposePytonPath().isEmpty()) {
-            veRunner = new VirtualEnvironmentRunner(cellposeSetup.getOmniposePytonPath(), VirtualEnvironmentRunner.EnvType.EXE, this.getClass().getSimpleName());
-        } else {
-            veRunner = new VirtualEnvironmentRunner(cellposeSetup.getCellposePytonPath(), VirtualEnvironmentRunner.EnvType.EXE, this.getClass().getSimpleName());
+        // Change the envType based on the setup options
+        VirtualEnvironmentRunner.EnvType type = VirtualEnvironmentRunner.EnvType.EXE;
+        String condaPath = null;
+        if( !cellposeSetup.getCondaPath().isEmpty()) {
+            type = VirtualEnvironmentRunner.EnvType.CONDA;
+            condaPath = cellposeSetup.getCondaPath();
         }
-        return veRunner;
+
+        // Set python executable to switch between onminpose and cellpose
+        String pythonPath = cellposeSetup.getCellposePythonPath();
+        if (this.parameters.containsKey("omni") && !cellposeSetup.getOmniposePythonPath().isEmpty())
+            pythonPath = cellposeSetup.getOmniposePythonPath();
+
+
+        return new VirtualEnvironmentRunner(pythonPath, type, condaPath, this.getClass().getSimpleName());
+
     }
 
     /**
@@ -725,7 +739,7 @@ public class Cellpose2D {
      * @throws IOException          Exception in case files could not be read
      * @throws InterruptedException Exception in case of command thread has some failing
      */
-    private LinkedHashMap<File, TileFile> runCellpose(LinkedHashMap<File, TileFile> allTiles) throws InterruptedException, IOException {
+    private void runCellpose(LinkedHashMap<File, TileFile> allTiles) throws InterruptedException, IOException {
 
         // Need to define the name of the command we are running. We used to be able to use 'cellpose' for both but not since Cellpose v2
         String runCommand = this.parameters.containsKey("omni") ? "omnipose" : "cellpose";
@@ -764,17 +778,16 @@ public class Cellpose2D {
         // Finally, we can run Cellpose
         veRunner.runCommand(false);
 
-        return processCellposeFiles(veRunner, allTiles);
-
+        processCellposeFiles(veRunner, allTiles);
     }
 
-    private LinkedHashMap<File, TileFile> processCellposeFiles(VirtualEnvironmentRunner veRunner, LinkedHashMap<File, TileFile> allTiles) throws CancellationException, InterruptedException, IOException {
+    private void processCellposeFiles(VirtualEnvironmentRunner veRunner, LinkedHashMap<File, TileFile> allTiles) throws CancellationException, InterruptedException, IOException {
 
         // Make sure that allTiles is not null, if it is, just return null
         // as we are likely just running validation and thus do not need to give any results back
         if (allTiles == null ) {
             veRunner.getProcess().waitFor();
-            return null;
+            return;
         }
 
         // Build a thread pool to process reading the images in parallel
@@ -797,33 +810,35 @@ public class Cellpose2D {
 
             });
         } else { // Experimental file listening and running
+
+            //Make a map of the original names and the expected names
+            LinkedHashMap<File, File> remainingFiles = allTiles.entrySet().stream().map(entry -> {
+                File originalFile = entry.getKey();
+                File expectedFile = entry.getValue().getLabelFile();
+                return new AbstractMap.SimpleEntry<>(originalFile, expectedFile);
+
+            }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
             try {
                 // We need to listen for changes in the temp folder
                 veRunner.startWatchService(this.tempDirectory.toPath());
-                //Make a map of the original names and the expected names
-                LinkedHashMap<File, File> remainingFiles = allTiles.entrySet().stream().map(entry -> {
-                    File originalFile = entry.getKey();
-                    File expectedFile = entry.getValue().getLabelFile();
-                    return new AbstractMap.SimpleEntry<>(originalFile, expectedFile);
-
-                }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
 
                 // The command above will run in a separate thread, now we can start listening for the files changing
-                while ( remainingFiles.size() > 0 ) {
+                while (!remainingFiles.isEmpty() && veRunner.getProcess().isAlive() ) {
                     if( !veRunner.getProcess().isAlive() )  {
                         // It's no longer running so check the exit code
                         int exitValue = veRunner.getProcess().exitValue();
                         if( exitValue != 0) {
-                            throw new CancellationException("Cellpose process exited with value " + exitValue + ". Please check output above for indications of the problem.");
+                            throw new IOException("Cellpose process exited with value " + exitValue + ". Please check output above for indications of the problem.\nWill attempt to continue");
                         }
                     }
 
                     // Get the files that have changes
                     List<String> changedFiles = veRunner.getChangedFiles();
 
-                    if( changedFiles.size() == 0 ) {
+                    if( changedFiles.isEmpty() ) {
                         continue;
                     }
+
                     // Find the tiles that corresponds to the changed files
                     LinkedHashMap<File, File> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
                         // Create a file that matches the mask name
@@ -844,21 +859,50 @@ public class Cellpose2D {
                             tile.setCandidates(candidates);
                         });
                     });
-                    // Remove them from the list of remaining files
-                    remainingFiles = remainingFiles.entrySet().stream().filter( v -> !finishedFiles.containsKey(v.getKey())).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+
+                    // Remove from the queue
+                    finishedFiles.forEach( (k, v) ->{
+                        remainingFiles.remove(k);
+                    });
                 }
             } catch (IOException e) {
                 logger.error(e.getMessage(), e);
+
             } finally {
+                // No matter what, try and check if there are tiles left
+
+                // Get the files that have changes
+                List<String> changedFiles = veRunner.getChangedFiles();
+
+                // Find the tiles that corresponds to the changed files
+                LinkedHashMap<File, File> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
+                    // Create a file that matches the mask name
+                    return changedFiles.contains(set.getValue().getName());
+                }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+
+                // Announce that these files are done
+                finishedFiles.entrySet().forEach(set -> {
+                    TileFile tile = allTiles.get(set.getKey());
+                    executor.execute(() -> {
+                        // Read the objects from the file
+                        Collection<CandidateObject> candidates;
+                        try {
+                            candidates = readObjectsFromFile(tile);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                        tile.setCandidates(candidates);
+                    });
+                });
+                // Remove them from the list of remaining files
+
                 veRunner.closeWatchService();
+
             }
         }
 
-
         executor.shutdown();
         executor.awaitTermination(10, TimeUnit.MINUTES);
-
-        return allTiles;
     }
 
     /**
@@ -880,7 +924,7 @@ public class Cellpose2D {
 
             runTraining();
 
-            this.modelFile = moveAndReturnModelFile();
+            this.modelFile = moveRenameAndReturnModelFile();
 
             // Get the training results before overwriting the log with a new run
             this.trainingResults = parseTrainingResults();
@@ -1199,8 +1243,12 @@ public class Cellpose2D {
             RegionRequest request = RegionRequest.createInstance(originalServer.getPath(), downsample, a.getROI());
             File imageFile = new File(saveDirectory, imageName + "_region_" + i + ".tif");
             File maskFile = new File(saveDirectory, imageName + "_region_" + i + "_masks.tif");
-            try {
 
+            try {
+                // Ignore the tile if it is too small
+                if( request.getWidth() < 10 || request.getHeight() < 10 ) {
+                    throw new Exception("Tile size too small, ignoring");
+                }
                 ImageWriterTools.writeImageRegion(originalServer, request, imageFile.getAbsolutePath());
                 ImageWriterTools.writeImageRegion(labelServer, request, maskFile.getAbsolutePath());
                 logger.info("Saved image pair: \n\t{}\n\t{}", imageFile.getName(), maskFile.getName());
@@ -1208,6 +1256,9 @@ public class Cellpose2D {
             } catch (IOException ex) {
                 logger.error(ex.getMessage());
                 logger.error("Troubleshooting:\n - Check that the channel names are correct in the builder.");
+            } catch (Exception e) {
+                logger.warn(e.getMessage());
+                logger.warn("Tile {} too small", request.toString());
             }
         });
     }
@@ -1320,7 +1371,15 @@ public class Cellpose2D {
      * @return the File of the moved model
      * @throws IOException in case there was a problem moving the file
      */
-    private File moveAndReturnModelFile() throws IOException {
+    private File moveRenameAndReturnModelFile() throws IOException {
+
+        if (this.outputModelName == null ) {
+            this.outputModelName = "Custom_model";
+        }
+        // Append timestamp
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH_mm");
+        this.outputModelName += "_"+formatter.format(LocalDateTime.now());
+
         File cellPoseModelFolder = new File(getTrainingDirectory(), "models");
         // Find the first file in there
         File[] all = cellPoseModelFolder.listFiles();
@@ -1328,7 +1387,7 @@ public class Cellpose2D {
         if (cellPoseModel.isPresent()) {
             File model = cellPoseModel.get();
             logger.info("Found model file at {} ", model);
-            File newModel = new File(modelDirectory, model.getName());
+            File newModel = new File(modelDirectory, this.outputModelName + ".cpm");
             FileUtils.copyFile(model, newModel);
             logger.info("Model file {} moved to {}", newModel.getName(), newModel.getParent().replace('\\', '/'));
             return newModel;
@@ -1345,30 +1404,36 @@ public class Cellpose2D {
     private Collection<CandidateObject> readObjectsFromFile(TileFile tileFile) throws IOException {
 
         logger.info("Reading objects from file {}", tileFile.getLabelFile().getName());
-        BufferedImage bfImage = ImageIO.read(tileFile.getLabelFile());
-        SimpleImage image = ContourTracing.extractBand(bfImage.getRaster(), 0);
-        float[] pixels = SimpleImages.getPixels(image, true);
+        try {
+            BufferedImage bfImage = ImageIO.read(tileFile.getLabelFile());
+            SimpleImage image = ContourTracing.extractBand(bfImage.getRaster(), 0);
+            float[] pixels = SimpleImages.getPixels(image, true);
 
-        float maxValue = 1;
-        for (float p : pixels) {
-            if (p > maxValue)
-                maxValue = p;
-        }
-        int maxLabel = (int) maxValue;
-
-        Map<Number, CandidateObject> candidates = new TreeMap<>();
-        float lastLabel = Float.NaN;
-        for (float p : pixels) {
-            if (p >= 1 && p <= maxLabel && p != lastLabel && !candidates.containsKey(p)) {
-                Geometry geometry = ContourTracing.createTracedGeometry(image, p, p, tileFile.getTile());
-                if (geometry != null && !geometry.isEmpty())
-                    candidates.put(p, new CandidateObject(geometry, tileFile.getParent()));
-                lastLabel = p;
+            float maxValue = 1;
+            for (float p : pixels) {
+                if (p > maxValue)
+                    maxValue = p;
             }
+            int maxLabel = (int) maxValue;
+
+            Map<Number, CandidateObject> candidates = new TreeMap<>();
+            float lastLabel = Float.NaN;
+            for (float p : pixels) {
+                if (p >= 1 && p <= maxLabel && p != lastLabel && !candidates.containsKey(p)) {
+                    Geometry geometry = ContourTracing.createTracedGeometry(image, p, p, tileFile.getTile());
+                    if (geometry != null && !geometry.isEmpty())
+                        candidates.put(p, new CandidateObject(geometry, tileFile.getParent()));
+                    lastLabel = p;
+                }
+            }
+            bfImage.flush();
+            // Ignore the IDs, because they will be the same across different images, and we don't really need them
+            if (candidates.isEmpty()) return Collections.emptyList();
+            return candidates.values();
+        } catch (IOException e) {
+            logger.warn("Image {} could not be read for some reason: \n{}", tileFile.getLabelFile(), e.getLocalizedMessage());
         }
-        // Ignore the IDs, because they will be the same across different images, and we don't really need them
-        if(candidates.isEmpty()) return Collections.emptyList();
-        return candidates.values();
+        return Collections.emptyList();
     }
 
     /**
@@ -1381,7 +1446,7 @@ public class Cellpose2D {
         private final File imageFile;
         private final PathObject parent;
 
-        private Collection<CandidateObject> candidates;
+        private Collection<CandidateObject> candidates = Collections.emptyList();
 
 
         TileFile(RegionRequest request, File imageFile, PathObject parent) {
