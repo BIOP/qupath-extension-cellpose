@@ -127,10 +127,11 @@ Based on the `mamba` installation above, this is what it should look like on Win
 > The reason for this is that there may be versions of cellpose and its dependencies that might not match with Omnipose. Adding to that, some parameters
 > in cellpose and omnipose are currently out of sync, so it could be wiser to keep them separate.
 
-> [!IMPORTANT]
-> As of this writing, the versions used are `cellpose==2.2.1` and `omnipose==0.4.4`
-
 **The extension handles switching between the two based on the `useOmnipose()` flag in the builder.**
+
+> [!NOTE]
+> Unless stated otherwise, this extension should work with the latest releases of both Cellpose and Omnipose.
+> If this is not the case, please [open an issue on our GitHub](https://github.com/BIOP/qupath-extension-cellpose/issues/new) or [write a post on the Image.sc forum](https://forum.image.sc/new-topic?category=usage-issues&tags=cellpose-qupath,qupath-cellpose) detailing the problem and the steps necessary to reproduce it.
 
 ## Running Cellpose the first time in standalone
 
