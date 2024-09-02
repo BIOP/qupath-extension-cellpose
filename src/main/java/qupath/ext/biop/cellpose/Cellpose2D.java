@@ -31,6 +31,7 @@ import org.apache.commons.io.FilenameUtils;
 import org.bytedeco.opencv.opencv_core.Mat;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryCollection;
 import org.locationtech.jts.index.strtree.STRtree;
 import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
@@ -609,14 +610,14 @@ public class Cellpose2D {
             retainedObjects.add(currentCandidate);
             var envelope = envelopes.get(currentCandidate);
 
-            var overlaps = (List<CandidateObject>) tree.query(envelope);
-            for (var overlappingCandidate : overlaps) {
+            List<CandidateObject> overlaps = (List<CandidateObject>) tree.query(envelope);
+            for (CandidateObject overlappingCandidate : overlaps) {
                 if (overlappingCandidate == currentCandidate || skippedObjects.contains(overlappingCandidate) || retainedObjects.contains(overlappingCandidate))
                     continue;
 
                 // If we have an overlap, try to keep the largest object
                 try {
-                    /*
+
                     var env = envelopes.get(overlappingCandidate);
                     if (envelope.intersects(env) && currentCandidate.geometry.intersects(overlappingCandidate.geometry)) {
                         // Retain the nucleus only if it is not fragmented, or less than half its original area
@@ -645,8 +646,6 @@ public class Cellpose2D {
                             skippedObjects.add(overlappingCandidate);
                         }
                     }
-                    */
-                    skippedObjects.add(overlappingCandidate);
 
                 } catch (Exception e) {
                     skipErrorCount++;
