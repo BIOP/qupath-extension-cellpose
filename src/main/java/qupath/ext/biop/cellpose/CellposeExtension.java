@@ -85,21 +85,21 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
                 .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
                 .name("Cellpose 'python.exe' location")
                 .category("Cellpose/Omnipose")
-                .description("Enter the full path to your cellpose environment, including 'python.exe'")
+                .description("Enter the full path to your cellpose environment, including 'python.exe'\nDo not include quotes (\') or double quotes (\") around the path.")
                 .build();
 
         PropertySheet.Item omniposePathItem = new PropertyItemBuilder<>(omniposePath, String.class)
                 .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
                 .name("Omnipose 'python.exe' location")
                 .category("Cellpose/Omnipose")
-                .description("Enter the full path to your omnipose environment, including 'python.exe'")
+                .description("Enter the full path to your omnipose environment, including 'python.exe'\nDo not include quotes (\') or double quotes (\") around the path.")
                 .build();
 
         PropertySheet.Item condaPathItem = new PropertyItemBuilder<>(condaPath, String.class)
                 .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
-                .name("'Conda' script location (optional)")
+                .name("'Conda/Mamba' script location (optional)")
                 .category("Cellpose/Omnipose")
-                .description("The full path to you conda/mamba command, in case you want the extension to use the 'conda activate' command.\ne.g 'C:\\ProgramData\\Miniconda3\\condabin\\mamba.bat'")
+                .description("The full path to you conda/mamba command, in case you want the extension to use the 'conda activate' command.\ne.g 'C:\\ProgramData\\Miniconda3\\condabin\\mamba.bat'\nDo not include quotes (\') or double quotes (\") around the path.")
                 .build();
 
         // Add Permanent Preferences and Populate Preferences
