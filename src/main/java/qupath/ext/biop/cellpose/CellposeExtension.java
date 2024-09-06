@@ -13,6 +13,7 @@ import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.gui.tools.MenuTools;
 
+import java.io.File;
 import java.io.InputStream;
 import java.util.LinkedHashMap;
 
@@ -26,7 +27,6 @@ import java.util.LinkedHashMap;
 public class CellposeExtension implements QuPathExtension, GitHubProject {
 
     private static final Logger logger = LoggerFactory.getLogger(CellposeExtension.class);
-
     private boolean isInstalled = false;
 
     private static final LinkedHashMap<String, String> SCRIPTS = new LinkedHashMap<>() {{
@@ -79,7 +79,6 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         cellposePath.addListener((v, o, n) -> options.setCellposePythonPath(n));
         omniposePath.addListener((v, o, n) -> options.setOmniposePythonPath(n));
         condaPath.addListener((v, o, n) -> options.setCondaPath(n));
-
 
         PropertySheet.Item cellposePathItem = new PropertyItemBuilder<>(cellposePath, String.class)
                 .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
