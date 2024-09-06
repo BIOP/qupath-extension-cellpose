@@ -18,7 +18,12 @@ package qupath.ext.biop.cellpose;
 
 import ij.IJ;
 import ij.ImagePlus;
+import ij.gui.PolygonRoi;
+import ij.gui.Roi;
+import ij.gui.Wand;
 import ij.measure.ResultsTable;
+import ij.process.ColorProcessor;
+import ij.process.ImageProcessor;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.chart.LineChart;
 import javafx.scene.chart.NumberAxis;
@@ -39,6 +44,7 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.biop.cmd.VirtualEnvironmentRunner;
 import qupath.fx.dialogs.Dialogs;
 import qupath.fx.utils.FXUtils;
+import qupath.imagej.tools.IJTools;
 import qupath.lib.analysis.features.ObjectMeasurements;
 import qupath.lib.analysis.images.ContourTracing;
 import qupath.lib.analysis.images.SimpleImage;
@@ -82,6 +88,7 @@ import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * Dense object detection based on the cellpose and omnipose publications
@@ -397,7 +404,7 @@ public class Cellpose2D {
                         try {
                             return saveTileImage(opWithPreprocessing, imageData, t, parent);
                         } catch (IOException e) {
-                            e.printStackTrace();
+                            logger.warn("Could not save tile image", e);
                         }
                         return null;
                     })
@@ -435,7 +442,7 @@ public class Cellpose2D {
 
             // Convert to detections, dilating to approximate cells if necessary
             // Drop cells if they fail (rather than catastrophically give up)
-            List<PathObject> finalObjects = filteredDetections.parallelStream()
+            List<PathObject> finalObjects = filteredDetections.stream()
                     .map(n -> {
                         try {
                             return convertToObject(n, parent.getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
@@ -482,7 +489,7 @@ public class Cellpose2D {
                     try {
                         ObjectMeasurements.addIntensityMeasurements(server2, cell, finalDownsample1, measurements, compartments);
                     } catch (IOException ie) {
-                        logger.info(ie.getLocalizedMessage(), ie);
+                        logger.info("Error adding intensity measurement: "+ie.getLocalizedMessage(), ie);
                     }
                 });
 
@@ -798,13 +805,7 @@ public class Cellpose2D {
             allTiles.entrySet().forEach(entry -> {
                 executor.execute(() -> {
                     // Read the objects from the file
-                    Collection<CandidateObject> candidates;
-                    try {
-                        candidates = readObjectsFromFile(entry.getValue());
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                    entry.getValue().setCandidates(candidates);
+                    entry.getValue().setCandidates(readObjectsFromFile2(entry.getValue()));
                 });
 
             });
@@ -849,13 +850,7 @@ public class Cellpose2D {
                         TileFile tile = allTiles.get(set.getKey());
                         executor.execute(() -> {
                             // Read the objects from the file
-                            Collection<CandidateObject> candidates;
-                            try {
-                                candidates = readObjectsFromFile(tile);
-                            } catch (IOException e) {
-                                throw new RuntimeException(e);
-                            }
-                            tile.setCandidates(candidates);
+                            tile.setCandidates(readObjectsFromFile(tile));
                         });
                     });
 
@@ -884,13 +879,7 @@ public class Cellpose2D {
                     TileFile tile = allTiles.get(set.getKey());
                     executor.execute(() -> {
                         // Read the objects from the file
-                        Collection<CandidateObject> candidates;
-                        try {
-                            candidates = readObjectsFromFile(tile);
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
-                        }
-                        tile.setCandidates(candidates);
+                        tile.setCandidates(readObjectsFromFile(tile));
                     });
                 });
                 // Remove them from the list of remaining files
@@ -936,7 +925,7 @@ public class Cellpose2D {
             return modelFile;
 
         } catch (IOException | InterruptedException e) {
-            logger.error(e.getMessage(), e);
+            logger.error("Error while running cellpose training: "+e.getMessage(), e);
         }
         return null;
     }
@@ -1394,13 +1383,67 @@ public class Cellpose2D {
         return null;
     }
 
+    private Collection<CandidateObject> readObjectsFromFile2(TileFile tileFile){
+        RegionRequest request = tileFile.getTile();
+
+        logger.info("Reading {}", tileFile.getLabelFile().getName());
+        // Open the image
+        ImagePlus label_imp = IJ.openImage(tileFile.getLabelFile().getAbsolutePath());
+        ImageProcessor ip = label_imp.getProcessor();
+
+        Wand wand = new Wand( ip );
+
+        // create range list
+        int width = ip.getWidth();
+        int height = ip.getHeight();
+
+        int[] pixel_width = new int[ width ];
+        int[] pixel_height = new int[ height ];
+
+        IntStream.range(0,width-1).forEach(val -> pixel_width[val] = val);
+        IntStream.range(0,height-1).forEach(val -> pixel_height[val] = val);
+
+        /*
+         * Will iterate through pixels, when getPixel > 0 ,
+         * then use the magic wand to create a roi
+         * finally set value to 0 and add to the roiManager
+         */
+
+        // will "erase" found ROI by setting them to 0
+        ip.setColor(0);
+        List<CandidateObject> rois = new ArrayList<>();
+
+        for ( int y_coord : pixel_height) {
+            for (int x_coord : pixel_width) {
+                float val = ip.getf(x_coord, y_coord);
+                if (val > 0.0) {
+                    // use the magic wand at this coordinate
+                    wand.autoOutline(x_coord, y_coord, val, val);
+                    // if there is a region , then it has npoints
+                    if (wand.npoints > 0) {
+                        // get the Polygon, fill with 0 and add to the manager
+                        Roi roi = new PolygonRoi(wand.xpoints, wand.ypoints, wand.npoints, Roi.FREEROI);
+                        // Name the Roi with the position in the stack followed by the label ID
+                        // ip.fill should use roi, otherwise make a rectangle that erases surrounding pixels
+
+                        CandidateObject o = new CandidateObject(IJTools.convertToROI(roi, -1*request.getX(), -1*request.getY() , request.getDownsample(), request.getImagePlane()).getGeometry(), tileFile.getParent());
+
+                        rois.add(o);
+                        ip.fill(roi);
+                    }
+                }
+            }
+        }
+        label_imp.close();
+        return rois;
+    }
     /**
      * convert a label image to a collection of Geometry objects
      * @param tileFile the current tileFile we are processing
      * @return a collection of CandidateObject that will be added to the total objects
      * @throws IOException in case there was a problem reading the label file
      */
-    private Collection<CandidateObject> readObjectsFromFile(TileFile tileFile) throws IOException {
+    private Collection<CandidateObject> readObjectsFromFile(TileFile tileFile) {
 
         logger.info("Reading objects from file {}", tileFile.getLabelFile().getName());
         try {
@@ -1429,6 +1472,7 @@ public class Cellpose2D {
             // Ignore the IDs, because they will be the same across different images, and we don't really need them
             if (candidates.isEmpty()) return Collections.emptyList();
             return candidates.values();
+
         } catch (IOException e) {
             logger.warn("Image {} could not be read for some reason: \n{}", tileFile.getLabelFile(), e.getLocalizedMessage());
         }
