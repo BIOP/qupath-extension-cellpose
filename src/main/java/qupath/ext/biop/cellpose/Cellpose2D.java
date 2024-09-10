@@ -358,7 +358,7 @@ public class Cellpose2D {
 
         final double finalDownsample = downsample;
 
-        LinkedHashMap<File, TileFile> allTiles = parents.parallelStream().map(parent -> {
+        List<TileFile> allTiles = parents.parallelStream().map(parent -> {
             RegionRequest request = RegionRequest.createInstance(
                     opServer.getPath(),
                     opServer.getDownsampleForResolution(0),
@@ -401,7 +401,7 @@ public class Cellpose2D {
             logger.info("Saving images for {} tiles", tiles.size());
 
             // Save each tile to an image and keep a reference to it
-            LinkedHashMap<File, TileFile> individualTiles = tiles.parallelStream()
+            List<TileFile> individualTiles = tiles.parallelStream()
                     .map(tile -> {
                         try {
                             return saveTileImage(opWithPreprocessing, imageData, tile, parent);
@@ -410,9 +410,9 @@ public class Cellpose2D {
                         }
                         return null;
                     })
-                    .collect(Collectors.toMap(tileFile -> tileFile != null ? tileFile.getImageFile() : null, Function.identity(), (a, b) -> a, LinkedHashMap::new));
+                    .collect(Collectors.toList());
             return individualTiles;
-        }).flatMap(m -> m.entrySet().stream()).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
+        }).flatMap(List::stream).collect(Collectors.toList());
 
         // Here the files are saved, and we can run cellpose to recover the masks
 
@@ -423,13 +423,10 @@ public class Cellpose2D {
             return;
         }
 
-
         // Group the candidates per parent object, as this is needed to optimize when checking for overlap
-        Map<PathObject, List<CandidateObject>> candidatesPerParent = allTiles.values().stream()
+        Map<PathObject, List<CandidateObject>> candidatesPerParent = allTiles.stream()
                 .flatMap(t -> t.getCandidates().stream())
                 .collect(Collectors.groupingBy(c -> c.parent));
-
-        double finalDownsample1 = downsample;
 
         candidatesPerParent.entrySet().parallelStream().forEach(e -> {
             PathObject parent = e.getKey();
@@ -440,7 +437,6 @@ public class Cellpose2D {
 
             // Remove the detections that are not contained within the parent
             Geometry mask = parent.getROI().getGeometry();
-            //filteredDetections = filteredDetections.stream().filter(t -> mask.covers(t.getROI().getGeometry())).collect(Collectors.toList());
 
             // Convert to detections, dilating to approximate cells if necessary
             // Drop cells if they fail (rather than catastrophically give up)
@@ -489,7 +485,7 @@ public class Cellpose2D {
 
                 finalObjects.parallelStream().forEach(cell -> {
                     try {
-                        ObjectMeasurements.addIntensityMeasurements(server2, cell, finalDownsample1, measurements, compartments);
+                        ObjectMeasurements.addIntensityMeasurements(server2, cell, finalDownsample, measurements, compartments);
                     } catch (IOException ie) {
                         logger.info("Error adding intensity measurement: "+ie.getLocalizedMessage(), ie);
                     }
@@ -747,7 +743,7 @@ public class Cellpose2D {
      * @throws IOException          Exception in case files could not be read
      * @throws InterruptedException Exception in case of command thread has some failing
      */
-    private void runCellpose(LinkedHashMap<File, TileFile> allTiles) throws InterruptedException, IOException {
+    private void runCellpose(List<TileFile> allTiles) throws InterruptedException, IOException {
 
         // Need to define the name of the command we are running. We used to be able to use 'cellpose' for both but not since Cellpose v2
         String runCommand = this.parameters.containsKey("omni") ? "omnipose" : "cellpose";
@@ -789,7 +785,7 @@ public class Cellpose2D {
         processCellposeFiles(veRunner, allTiles);
     }
 
-    private void processCellposeFiles(VirtualEnvironmentRunner veRunner, LinkedHashMap<File, TileFile> allTiles) throws CancellationException, InterruptedException, IOException {
+    private void processCellposeFiles(VirtualEnvironmentRunner veRunner, List<TileFile> allTiles) throws CancellationException, InterruptedException, IOException {
 
         // Make sure that allTiles is not null, if it is, just return null
         // as we are likely just running validation and thus do not need to give any results back
@@ -804,22 +800,21 @@ public class Cellpose2D {
         if (!this.doReadResultsAsynchronously) {
             // We need to wait for the process to finish
             veRunner.getProcess().waitFor();
-            allTiles.entrySet().forEach(entry -> {
+            allTiles.forEach(entry -> {
                 executor.execute(() -> {
                     // Read the objects from the file
-                    entry.getValue().setCandidates(readObjectsFromFile2(entry.getValue()));
+                    entry.setCandidates(readObjectsFromTileFile(entry));
                 });
 
             });
         } else { // Experimental file listening and running
 
             //Make a map of the original names and the expected names
-            LinkedHashMap<File, File> remainingFiles = allTiles.entrySet().stream().map(entry -> {
-                File originalFile = entry.getKey();
-                File expectedFile = entry.getValue().getLabelFile();
-                return new AbstractMap.SimpleEntry<>(originalFile, expectedFile);
-
+            LinkedHashMap<File, TileFile> remainingFiles = allTiles.stream().map(entry -> {
+                File expectedFile = entry.getLabelFile();
+                return new AbstractMap.SimpleEntry<>(expectedFile, entry);
             }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+
             try {
                 // We need to listen for changes in the temp folder
                 veRunner.startWatchService(this.tempDirectory.toPath());
@@ -842,19 +837,16 @@ public class Cellpose2D {
                     }
 
                     // Find the tiles that corresponds to the changed files
-                    LinkedHashMap<File, File> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
+                    LinkedHashMap<File, TileFile> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
                         // Create a file that matches the mask name
-                        return changedFiles.contains(set.getValue().getName());
+                        return changedFiles.contains(set.getKey().getName());
                     }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
 
                     // Announce that these files are done
-                    finishedFiles.entrySet().forEach(set -> {
-                        TileFile tile = allTiles.get(set.getKey());
-                        executor.execute(() -> {
-                            // Read the objects from the file
-                            tile.setCandidates(readObjectsFromFile(tile));
-                        });
-                    });
+                    finishedFiles.forEach((key, tile) -> executor.execute(() -> {
+                        // Read the objects from the file
+                        tile.setCandidates(readObjectsFromTileFile(tile));
+                    }));
 
                     // Remove from the queue
                     finishedFiles.forEach( (k, v) ->{
@@ -871,17 +863,16 @@ public class Cellpose2D {
                 List<String> changedFiles = veRunner.getChangedFiles();
 
                 // Find the tiles that corresponds to the changed files
-                LinkedHashMap<File, File> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
+                LinkedHashMap<File, TileFile> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
                     // Create a file that matches the mask name
-                    return changedFiles.contains(set.getValue().getName());
+                    return changedFiles.contains(set.getKey().getName());
                 }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
 
                 // Announce that these files are done
-                finishedFiles.entrySet().forEach(set -> {
-                    TileFile tile = allTiles.get(set.getKey());
+                finishedFiles.forEach((key, tile) -> {
                     executor.execute(() -> {
                         // Read the objects from the file
-                        tile.setCandidates(readObjectsFromFile(tile));
+                        tile.setCandidates(readObjectsFromTileFile(tile));
                     });
                 });
                 // Remove them from the list of remaining files
@@ -1385,7 +1376,7 @@ public class Cellpose2D {
         return null;
     }
 
-    private Collection<CandidateObject> readObjectsFromFile2(TileFile tileFile){
+    private Collection<CandidateObject> readObjectsFromTileFile(TileFile tileFile){
         RegionRequest request = tileFile.getTile();
 
         logger.info("Reading {}", tileFile.getLabelFile().getName());
@@ -1428,7 +1419,7 @@ public class Cellpose2D {
                         // Name the Roi with the position in the stack followed by the label ID
                         // ip.fill should use roi, otherwise make a rectangle that erases surrounding pixels
 
-                        CandidateObject o = new CandidateObject(IJTools.convertToROI(roi, -1*request.getX(), -1*request.getY() , request.getDownsample(), request.getImagePlane()).getGeometry(), tileFile.getParent());
+                        CandidateObject o = new CandidateObject(IJTools.convertToROI(roi, -1*request.getX() / request.getDownsample(), -1*request.getY() / request.getDownsample() , request.getDownsample(), request.getImagePlane()).getGeometry(), tileFile.getParent());
 
                         rois.add(o);
                         ip.fill(roi);
@@ -1439,13 +1430,14 @@ public class Cellpose2D {
         label_imp.close();
         return rois;
     }
+
     /**
      * convert a label image to a collection of Geometry objects
      * @param tileFile the current tileFile we are processing
      * @return a collection of CandidateObject that will be added to the total objects
      * @throws IOException in case there was a problem reading the label file
      */
-    private Collection<CandidateObject> readObjectsFromFile(TileFile tileFile) {
+    private Collection<CandidateObject> readObjectsFromFileOld(TileFile tileFile) {
 
         logger.info("Reading objects from file {}", tileFile.getLabelFile().getName());
         try {
@@ -1480,6 +1472,7 @@ public class Cellpose2D {
         }
         return Collections.emptyList();
     }
+
 
     /**
      * Static class to hold the correspondence between a
