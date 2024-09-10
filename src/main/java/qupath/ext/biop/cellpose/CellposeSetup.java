@@ -8,7 +8,6 @@ public class CellposeSetup {
     private static final CellposeSetup instance = new CellposeSetup();
     private String cellposePythonPath = null;
     private String omniposePythonPath = null;
-
     private String condaPath = null;
 
     public static CellposeSetup getInstance() {
