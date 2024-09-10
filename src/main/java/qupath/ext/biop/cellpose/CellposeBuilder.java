@@ -226,7 +226,7 @@ public class CellposeBuilder {
      * @param global preprocessing operation
      * @return this builder
      */
-    public CellposeBuilder preprocess(TileOpCreator global) {
+    public CellposeBuilder preprocessGlobal(TileOpCreator global) {
         this.globalPreprocessing = global;
         return this;
     }
@@ -761,7 +761,7 @@ public class CellposeBuilder {
         this.noCellposeNormalization();
 
         // Add this operation to the preprocessing
-        return this.preprocess(normOp);
+        return this.preprocessGlobal(normOp);
     }
 
     /**
@@ -834,7 +834,7 @@ public class CellposeBuilder {
 
         cellpose.extendChannelOp = extendChannelOp;
 
-
+        // TODO make compatible with --all_channels
         if (this.channels.length > 2) {
             logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two", channels.length);
             this.channels = Arrays.copyOf(this.channels, 2);
