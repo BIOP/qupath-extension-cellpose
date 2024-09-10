@@ -266,7 +266,7 @@ public class Cellpose2D {
             } finally {
                 pool.shutdown();
                 try {
-                    pool.awaitTermination(24, TimeUnit.HOURS);
+                    pool.awaitTermination(2, TimeUnit.DAYS);
                 } catch (InterruptedException e) {
                     logger.warn("Process was interrupted! " + e.getLocalizedMessage(), e);
                 }
@@ -321,19 +321,21 @@ public class Cellpose2D {
      * @param parents   the parent objects; existing child objects will be removed, and replaced by the detected cells
      */
     public void detectObjectsImpl(ImageData<BufferedImage> imageData, Collection<? extends PathObject> parents) {
-        //runInPool(() -> detectObjectsImpl(imageData, parents));
+
         // Multi step process
         // 1. Extract all images and save to temp folder
         // 2. Run Cellpose on folder
         // 3. Pick up Label images and convert to PathObjects
+        // 4. Resolve overlaps
+        // 5. Make measurements if requested
 
         Objects.requireNonNull(parents);
 
         // Make the temp directory
         cleanDirectory(tempDirectory);
 
-
         PixelCalibration resolution = imageData.getServer().getPixelCalibration();
+
         if (Double.isFinite(pixelSize) && pixelSize > 0) {
             double downsample = pixelSize / resolution.getAveragedPixelSize().doubleValue();
             resolution = resolution.createScaledInstance(downsample, downsample);
@@ -341,13 +343,12 @@ public class Cellpose2D {
 
         // The opServer is needed only to get tile requests, or calculate global normalization percentiles
         ImageDataServer<BufferedImage> opServer = ImageOps.buildServer(imageData, op, resolution, tileWidth, tileHeight);
-//		var opServer = ImageOps.buildServer(imageData, op, resolution, tileWidth-pad*2, tileHeight-pad*2);
 
 
         // Get downsample factor
         double downsample = 1;
         if (Double.isFinite(pixelSize) && pixelSize > 0) {
-            downsample = Math.round(pixelSize / imageData.getServer().getPixelCalibration().getAveragedPixelSize().doubleValue());
+            downsample = pixelSize / imageData.getServer().getPixelCalibration().getAveragedPixelSize().doubleValue();
         }
 
         ImageServer<BufferedImage> server = imageData.getServer();
@@ -363,7 +364,6 @@ public class Cellpose2D {
                     opServer.getDownsampleForResolution(0),
                     parent.getROI());
 
-
             Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileWidth * finalDownsample)), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample * 1.5), (int) (tileHeight * finalDownsample * 1.5)), true, (int) (overlap * finalDownsample));
 
             List<RegionRequest> tiles = rois.stream().map(r -> RegionRequest.createInstance(opServer.getPath(), opServer.getDownsampleForResolution(0), r)).toList();
@@ -378,7 +378,7 @@ public class Cellpose2D {
                     var normalizeOps = globalPreprocess.createOps(op, imageData, parent.getROI(), request.getImagePlane());
                     fullPreprocess.addAll(normalizeOps);
 
-                    // If this has happened, then we should expect to not use the cellpose normalization?
+                    // If this has happened, then we need to disable cellpose normalization
                     this.parameters.put("no_norm", null);
 
                 } catch (IOException e) {
@@ -389,10 +389,12 @@ public class Cellpose2D {
             if (!preprocess.isEmpty()) {
                 fullPreprocess.addAll(preprocess);
             }
-            if (fullPreprocess.size() > 1)
-                fullPreprocess.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
 
-            var opWithPreprocessing = op.appendOps(fullPreprocess.toArray(ImageOp[]::new));
+            if (fullPreprocess.size() > 1) {
+                fullPreprocess.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
+            }
+
+            ImageDataOp opWithPreprocessing = op.appendOps(fullPreprocess.toArray(ImageOp[]::new));
 
 
             // Keep a reference to the images here while they are being saved
@@ -400,15 +402,15 @@ public class Cellpose2D {
 
             // Save each tile to an image and keep a reference to it
             LinkedHashMap<File, TileFile> individualTiles = tiles.parallelStream()
-                    .map(t -> {
+                    .map(tile -> {
                         try {
-                            return saveTileImage(opWithPreprocessing, imageData, t, parent);
+                            return saveTileImage(opWithPreprocessing, imageData, tile, parent);
                         } catch (IOException e) {
                             logger.warn("Could not save tile image", e);
                         }
                         return null;
                     })
-                    .collect(Collectors.toMap(TileFile::getImageFile, Function.identity(), (a, b) -> a, LinkedHashMap::new));
+                    .collect(Collectors.toMap(tileFile -> tileFile != null ? tileFile.getImageFile() : null, Function.identity(), (a, b) -> a, LinkedHashMap::new));
             return individualTiles;
         }).flatMap(m -> m.entrySet().stream()).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
 
@@ -680,8 +682,7 @@ public class Cellpose2D {
      * @throws IOException an error in case of read/write issue
      */
     private TileFile saveTileImage(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request, PathObject parent) throws IOException {
-
-
+        
         // This applies all ops to the current tile
         Mat mat;
 
@@ -699,9 +700,10 @@ public class Cellpose2D {
                         "_z" + request.getZ() +
                         "_t" + request.getT() + ".tif");
         logger.info("Saving to {}", tempFile);
+        
         // Add check if image is too small, do not process it!
         if( imp.getWidth() < 10 || imp.getHeight() < 10 ) {
-                logger.warn("Image {} will not be saved as it is too small: {}", tempFile, imp);
+            logger.warn("Image {} will not be saved as it is too small: {}", tempFile, imp);
         } else {
             IJ.save(imp, tempFile.getAbsolutePath());
         }
@@ -1570,7 +1572,7 @@ public class Cellpose2D {
             this.pattern = Pattern.compile(regex);
         }
 
-        public String getName() {return this.name;}
-        public Pattern getPattern() {return this.pattern;}
+        public String getName() { return this.name; }
+        public Pattern getPattern() { return this.pattern; }
     }
 }
