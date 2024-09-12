@@ -69,7 +69,6 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         StringProperty omniposePath = PathPrefs.createPersistentPreference("omniposePythonPath", "");
         StringProperty condaPath = PathPrefs.createPersistentPreference("condaPath", "");
 
-
         //Set options to current values
         options.setCellposePythonPath(cellposePath.get());
         options.setOmniposePythonPath(omniposePath.get());

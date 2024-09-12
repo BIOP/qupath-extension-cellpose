@@ -8,7 +8,6 @@ public class CellposeSetup {
     private static final CellposeSetup instance = new CellposeSetup();
     private String cellposePythonPath = null;
     private String omniposePythonPath = null;
-
     private String condaPath = null;
 
     public static CellposeSetup getInstance() {
@@ -41,7 +40,7 @@ public class CellposeSetup {
 
     private void checkPath(String path) {
         // It should be a file and it should exist
-        if( !path.equals("")) {
+        if(!path.trim().isEmpty()) {
             File toCheck = new File(path);
             if (!toCheck.exists())
                 Dialogs.showWarningNotification("Cellpose/Omnipose extension: Path not found", "The path to \"" + path + "\" does not exist or does not point to a valid file.");

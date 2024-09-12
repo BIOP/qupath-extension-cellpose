@@ -22,7 +22,6 @@ import ij.gui.PolygonRoi;
 import ij.gui.Roi;
 import ij.gui.Wand;
 import ij.measure.ResultsTable;
-import ij.process.ColorProcessor;
 import ij.process.ImageProcessor;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.chart.LineChart;
@@ -118,55 +117,39 @@ public class Cellpose2D {
     private final static Logger logger = LoggerFactory.getLogger(Cellpose2D.class);
 
     public ImageOp extendChannelOp;
-    public boolean useGPU;
-    public String outputModelName;
 
     protected double simplifyDistance = 1.4;
-
     protected ImageDataOp op;
     protected OpCreators.TileOpCreator globalPreprocess;
     protected List<ImageOp> preprocess;
-
     protected double pixelSize;
     protected double cellExpansion;
     protected double cellConstrainScale;
     protected boolean ignoreCellOverlaps;
-
     protected Function<ROI, PathObject> creatorFun;
     protected PathClass globalPathClass;
-
     protected boolean constrainToParent = true;
-
     protected int tileWidth;
     protected int tileHeight;
-
     protected boolean measureShape = false;
-
     protected Collection<ObjectMeasurements.Compartments> compartments;
     protected Collection<ObjectMeasurements.Measurements> measurements;
-
+    protected int nThreads = -1;
 
     // CELLPOSE PARAMETERS
-
+    public boolean useGPU;
+    public String outputModelName;
+    public File groundTruthDirectory;
     protected CellposeSetup cellposeSetup = CellposeSetup.getInstance();
-
     // Parameters and parameter values that will be passed to the cellpose command
     protected LinkedHashMap<String, String> parameters;
-
     // No defaults. All should be handled by the builder
     protected String model;
     protected Integer overlap;
-
     protected File modelDirectory;
-
-    public File groundTruthDirectory;
-    protected int nThreads = -1;
-
     protected boolean doReadResultsAsynchronously;
-
     File tempDirectory;
     private List<String> theLog;
-    // Results table from the training
     private ResultsTable trainingResults;
     private ResultsTable qcResults;
     private File modelFile;
@@ -266,7 +249,7 @@ public class Cellpose2D {
             } finally {
                 pool.shutdown();
                 try {
-                    pool.awaitTermination(24, TimeUnit.HOURS);
+                    pool.awaitTermination(2, TimeUnit.DAYS);
                 } catch (InterruptedException e) {
                     logger.warn("Process was interrupted! " + e.getLocalizedMessage(), e);
                 }
@@ -282,7 +265,7 @@ public class Cellpose2D {
      * @return the directory
      */
     public File getTrainingDirectory() {
-        return new File( groundTruthDirectory, "train");
+        return new File(groundTruthDirectory, "train");
     }
 
     /**
@@ -291,7 +274,7 @@ public class Cellpose2D {
      * @return the directory
      */
     public File getValidationDirectory() {
-        return new File( groundTruthDirectory, "test");
+        return new File(groundTruthDirectory, "test");
     }
 
     private Geometry simplify(Geometry geom) {
@@ -321,19 +304,21 @@ public class Cellpose2D {
      * @param parents   the parent objects; existing child objects will be removed, and replaced by the detected cells
      */
     public void detectObjectsImpl(ImageData<BufferedImage> imageData, Collection<? extends PathObject> parents) {
-        //runInPool(() -> detectObjectsImpl(imageData, parents));
-        // Multi step process
+
+        // Multistep process
         // 1. Extract all images and save to temp folder
         // 2. Run Cellpose on folder
         // 3. Pick up Label images and convert to PathObjects
+        // 4. Resolve overlaps
+        // 5. Make measurements if requested
 
         Objects.requireNonNull(parents);
 
         // Make the temp directory
         cleanDirectory(tempDirectory);
 
-
         PixelCalibration resolution = imageData.getServer().getPixelCalibration();
+
         if (Double.isFinite(pixelSize) && pixelSize > 0) {
             double downsample = pixelSize / resolution.getAveragedPixelSize().doubleValue();
             resolution = resolution.createScaledInstance(downsample, downsample);
@@ -341,13 +326,12 @@ public class Cellpose2D {
 
         // The opServer is needed only to get tile requests, or calculate global normalization percentiles
         ImageDataServer<BufferedImage> opServer = ImageOps.buildServer(imageData, op, resolution, tileWidth, tileHeight);
-//		var opServer = ImageOps.buildServer(imageData, op, resolution, tileWidth-pad*2, tileHeight-pad*2);
 
 
         // Get downsample factor
         double downsample = 1;
         if (Double.isFinite(pixelSize) && pixelSize > 0) {
-            downsample = Math.round(pixelSize / imageData.getServer().getPixelCalibration().getAveragedPixelSize().doubleValue());
+            downsample = pixelSize / imageData.getServer().getPixelCalibration().getAveragedPixelSize().doubleValue();
         }
 
         ImageServer<BufferedImage> server = imageData.getServer();
@@ -357,12 +341,11 @@ public class Cellpose2D {
 
         final double finalDownsample = downsample;
 
-        LinkedHashMap<File, TileFile> allTiles = parents.parallelStream().map(parent -> {
+        List<TileFile> allTiles = parents.parallelStream().map(parent -> {
             RegionRequest request = RegionRequest.createInstance(
                     opServer.getPath(),
                     opServer.getDownsampleForResolution(0),
                     parent.getROI());
-
 
             Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileWidth * finalDownsample)), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample * 1.5), (int) (tileHeight * finalDownsample * 1.5)), true, (int) (overlap * finalDownsample));
 
@@ -378,7 +361,7 @@ public class Cellpose2D {
                     var normalizeOps = globalPreprocess.createOps(op, imageData, parent.getROI(), request.getImagePlane());
                     fullPreprocess.addAll(normalizeOps);
 
-                    // If this has happened, then we should expect to not use the cellpose normalization?
+                    // If this has happened, then we need to disable cellpose normalization
                     this.parameters.put("no_norm", null);
 
                 } catch (IOException e) {
@@ -389,28 +372,30 @@ public class Cellpose2D {
             if (!preprocess.isEmpty()) {
                 fullPreprocess.addAll(preprocess);
             }
-            if (fullPreprocess.size() > 1)
-                fullPreprocess.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
 
-            var opWithPreprocessing = op.appendOps(fullPreprocess.toArray(ImageOp[]::new));
+            if (fullPreprocess.size() > 1) {
+                fullPreprocess.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
+            }
+
+            ImageDataOp opWithPreprocessing = op.appendOps(fullPreprocess.toArray(ImageOp[]::new));
 
 
             // Keep a reference to the images here while they are being saved
             logger.info("Saving images for {} tiles", tiles.size());
 
             // Save each tile to an image and keep a reference to it
-            LinkedHashMap<File, TileFile> individualTiles = tiles.parallelStream()
-                    .map(t -> {
+            List<TileFile> individualTiles = tiles.parallelStream()
+                    .map(tile -> {
                         try {
-                            return saveTileImage(opWithPreprocessing, imageData, t, parent);
+                            return saveTileImage(opWithPreprocessing, imageData, tile, parent);
                         } catch (IOException e) {
                             logger.warn("Could not save tile image", e);
                         }
                         return null;
                     })
-                    .collect(Collectors.toMap(TileFile::getImageFile, Function.identity(), (a, b) -> a, LinkedHashMap::new));
+                    .collect(Collectors.toList());
             return individualTiles;
-        }).flatMap(m -> m.entrySet().stream()).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> a, LinkedHashMap::new));
+        }).flatMap(List::stream).collect(Collectors.toList());
 
         // Here the files are saved, and we can run cellpose to recover the masks
 
@@ -421,13 +406,10 @@ public class Cellpose2D {
             return;
         }
 
-
         // Group the candidates per parent object, as this is needed to optimize when checking for overlap
-        Map<PathObject, List<CandidateObject>> candidatesPerParent = allTiles.values().stream()
+        Map<PathObject, List<CandidateObject>> candidatesPerParent = allTiles.stream()
                 .flatMap(t -> t.getCandidates().stream())
                 .collect(Collectors.groupingBy(c -> c.parent));
-
-        double finalDownsample1 = downsample;
 
         candidatesPerParent.entrySet().parallelStream().forEach(e -> {
             PathObject parent = e.getKey();
@@ -438,7 +420,6 @@ public class Cellpose2D {
 
             // Remove the detections that are not contained within the parent
             Geometry mask = parent.getROI().getGeometry();
-            //filteredDetections = filteredDetections.stream().filter(t -> mask.covers(t.getROI().getGeometry())).collect(Collectors.toList());
 
             // Convert to detections, dilating to approximate cells if necessary
             // Drop cells if they fail (rather than catastrophically give up)
@@ -487,9 +468,9 @@ public class Cellpose2D {
 
                 finalObjects.parallelStream().forEach(cell -> {
                     try {
-                        ObjectMeasurements.addIntensityMeasurements(server2, cell, finalDownsample1, measurements, compartments);
+                        ObjectMeasurements.addIntensityMeasurements(server2, cell, finalDownsample, measurements, compartments);
                     } catch (IOException ie) {
-                        logger.info("Error adding intensity measurement: "+ie.getLocalizedMessage(), ie);
+                        logger.info("Error adding intensity measurement: " + ie.getLocalizedMessage(), ie);
                     }
                 });
 
@@ -506,7 +487,7 @@ public class Cellpose2D {
 
     }
 
-    private void cleanDirectory( File directory ) {
+    private void cleanDirectory(File directory) {
         // Delete the existing directory
         try {
             FileUtils.deleteDirectory(directory);
@@ -681,7 +662,6 @@ public class Cellpose2D {
      */
     private TileFile saveTileImage(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request, PathObject parent) throws IOException {
 
-
         // This applies all ops to the current tile
         Mat mat;
 
@@ -699,9 +679,10 @@ public class Cellpose2D {
                         "_z" + request.getZ() +
                         "_t" + request.getT() + ".tif");
         logger.info("Saving to {}", tempFile);
+
         // Add check if image is too small, do not process it!
-        if( imp.getWidth() < 10 || imp.getHeight() < 10 ) {
-                logger.warn("Image {} will not be saved as it is too small: {}", tempFile, imp);
+        if (imp.getWidth() < 10 || imp.getHeight() < 10) {
+            logger.warn("Image {} will not be saved as it is too small: {}", tempFile, imp);
         } else {
             IJ.save(imp, tempFile.getAbsolutePath());
         }
@@ -712,6 +693,7 @@ public class Cellpose2D {
     /**
      * Selects the right folder to run from, based on whether it's cellpose or omnipose.
      * Hopefully this will become deprecated soon
+     *
      * @return the virtual environment runner that can run the desired command
      */
     private VirtualEnvironmentRunner getVirtualEnvironmentRunner() {
@@ -724,12 +706,12 @@ public class Cellpose2D {
         // Change the envType based on the setup options
         VirtualEnvironmentRunner.EnvType type = VirtualEnvironmentRunner.EnvType.EXE;
         String condaPath = null;
-        if( !cellposeSetup.getCondaPath().isEmpty()) {
+        if (!cellposeSetup.getCondaPath().isEmpty()) {
             type = VirtualEnvironmentRunner.EnvType.CONDA;
             condaPath = cellposeSetup.getCondaPath();
         }
 
-        // Set python executable to switch between onminpose and cellpose
+        // Set python executable to switch between Omnipose and Cellpose
         String pythonPath = cellposeSetup.getCellposePythonPath();
         if (this.parameters.containsKey("omni") && !cellposeSetup.getOmniposePythonPath().isEmpty())
             pythonPath = cellposeSetup.getOmniposePythonPath();
@@ -745,7 +727,7 @@ public class Cellpose2D {
      * @throws IOException          Exception in case files could not be read
      * @throws InterruptedException Exception in case of command thread has some failing
      */
-    private void runCellpose(LinkedHashMap<File, TileFile> allTiles) throws InterruptedException, IOException {
+    private void runCellpose(List<TileFile> allTiles) throws InterruptedException, IOException {
 
         // Need to define the name of the command we are running. We used to be able to use 'cellpose' for both but not since Cellpose v2
         String runCommand = this.parameters.containsKey("omni") ? "omnipose" : "cellpose";
@@ -761,7 +743,7 @@ public class Cellpose2D {
         cellposeArguments.add("" + this.tempDirectory);
 
         cellposeArguments.add("--pretrained_model");
-        cellposeArguments.add("" + this.model);
+        cellposeArguments.add(this.model);
 
         this.parameters.forEach((parameter, value) -> {
             cellposeArguments.add("--" + parameter);
@@ -775,7 +757,7 @@ public class Cellpose2D {
 
         cellposeArguments.add("--no_npy");
 
-        if( this.useGPU ) cellposeArguments.add("--use_gpu");
+        if (this.useGPU) cellposeArguments.add("--use_gpu");
 
         cellposeArguments.add("--verbose");
 
@@ -787,11 +769,11 @@ public class Cellpose2D {
         processCellposeFiles(veRunner, allTiles);
     }
 
-    private void processCellposeFiles(VirtualEnvironmentRunner veRunner, LinkedHashMap<File, TileFile> allTiles) throws CancellationException, InterruptedException, IOException {
+    private void processCellposeFiles(VirtualEnvironmentRunner veRunner, List<TileFile> allTiles) throws CancellationException, InterruptedException, IOException {
 
         // Make sure that allTiles is not null, if it is, just return null
         // as we are likely just running validation and thus do not need to give any results back
-        if (allTiles == null ) {
+        if (allTiles == null) {
             veRunner.getProcess().waitFor();
             return;
         }
@@ -802,32 +784,31 @@ public class Cellpose2D {
         if (!this.doReadResultsAsynchronously) {
             // We need to wait for the process to finish
             veRunner.getProcess().waitFor();
-            allTiles.entrySet().forEach(entry -> {
+            allTiles.forEach(entry -> {
                 executor.execute(() -> {
                     // Read the objects from the file
-                    entry.getValue().setCandidates(readObjectsFromFile2(entry.getValue()));
+                    entry.setCandidates(readObjectsFromTileFile(entry));
                 });
 
             });
         } else { // Experimental file listening and running
 
             //Make a map of the original names and the expected names
-            LinkedHashMap<File, File> remainingFiles = allTiles.entrySet().stream().map(entry -> {
-                File originalFile = entry.getKey();
-                File expectedFile = entry.getValue().getLabelFile();
-                return new AbstractMap.SimpleEntry<>(originalFile, expectedFile);
-
+            LinkedHashMap<File, TileFile> remainingFiles = allTiles.stream().map(entry -> {
+                File expectedFile = entry.getLabelFile();
+                return new AbstractMap.SimpleEntry<>(expectedFile, entry);
             }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+
             try {
                 // We need to listen for changes in the temp folder
                 veRunner.startWatchService(this.tempDirectory.toPath());
 
                 // The command above will run in a separate thread, now we can start listening for the files changing
-                while (!remainingFiles.isEmpty() && veRunner.getProcess().isAlive() ) {
-                    if( !veRunner.getProcess().isAlive() )  {
+                while (!remainingFiles.isEmpty() && veRunner.getProcess().isAlive()) {
+                    if (!veRunner.getProcess().isAlive()) {
                         // It's no longer running so check the exit code
                         int exitValue = veRunner.getProcess().exitValue();
-                        if( exitValue != 0) {
+                        if (exitValue != 0) {
                             throw new IOException("Cellpose process exited with value " + exitValue + ". Please check output above for indications of the problem.\nWill attempt to continue");
                         }
                     }
@@ -835,27 +816,24 @@ public class Cellpose2D {
                     // Get the files that have changes
                     List<String> changedFiles = veRunner.getChangedFiles();
 
-                    if( changedFiles.isEmpty() ) {
+                    if (changedFiles.isEmpty()) {
                         continue;
                     }
 
                     // Find the tiles that corresponds to the changed files
-                    LinkedHashMap<File, File> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
+                    LinkedHashMap<File, TileFile> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
                         // Create a file that matches the mask name
-                        return changedFiles.contains(set.getValue().getName());
+                        return changedFiles.contains(set.getKey().getName());
                     }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
 
                     // Announce that these files are done
-                    finishedFiles.entrySet().forEach(set -> {
-                        TileFile tile = allTiles.get(set.getKey());
-                        executor.execute(() -> {
-                            // Read the objects from the file
-                            tile.setCandidates(readObjectsFromFile(tile));
-                        });
-                    });
+                    finishedFiles.forEach((key, tile) -> executor.execute(() -> {
+                        // Read the objects from the file
+                        tile.setCandidates(readObjectsFromTileFile(tile));
+                    }));
 
                     // Remove from the queue
-                    finishedFiles.forEach( (k, v) ->{
+                    finishedFiles.forEach((k, v) -> {
                         remainingFiles.remove(k);
                     });
                 }
@@ -869,17 +847,16 @@ public class Cellpose2D {
                 List<String> changedFiles = veRunner.getChangedFiles();
 
                 // Find the tiles that corresponds to the changed files
-                LinkedHashMap<File, File> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
+                LinkedHashMap<File, TileFile> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
                     // Create a file that matches the mask name
-                    return changedFiles.contains(set.getValue().getName());
+                    return changedFiles.contains(set.getKey().getName());
                 }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
 
                 // Announce that these files are done
-                finishedFiles.entrySet().forEach(set -> {
-                    TileFile tile = allTiles.get(set.getKey());
+                finishedFiles.forEach((key, tile) -> {
                     executor.execute(() -> {
                         // Read the objects from the file
-                        tile.setCandidates(readObjectsFromFile(tile));
+                        tile.setCandidates(readObjectsFromTileFile(tile));
                     });
                 });
                 // Remove them from the list of remaining files
@@ -925,7 +902,7 @@ public class Cellpose2D {
             return modelFile;
 
         } catch (IOException | InterruptedException e) {
-            logger.error("Error while running cellpose training: "+e.getMessage(), e);
+            logger.error("Error while running cellpose training: " + e.getMessage(), e);
         }
         return null;
     }
@@ -941,22 +918,18 @@ public class Cellpose2D {
         VirtualEnvironmentRunner veRunner = getVirtualEnvironmentRunner();
 
         // This is the list of commands after the 'python' call
-        List<String> cellposeArguments = new ArrayList<>(Arrays.asList( "-Xutf8", "-W", "ignore", "-m", runCommand));
+        List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-Xutf8", "-W", "ignore", "-m", runCommand));
 
         cellposeArguments.add("--train");
 
         cellposeArguments.add("--dir");
-        cellposeArguments.add("" + getTrainingDirectory().getAbsolutePath());
+        cellposeArguments.add(getTrainingDirectory().getAbsolutePath());
 
         cellposeArguments.add("--test_dir");
-        cellposeArguments.add("" + getValidationDirectory().getAbsolutePath());
+        cellposeArguments.add(getValidationDirectory().getAbsolutePath());
 
         cellposeArguments.add("--pretrained_model");
-        if (model != null) {
-            cellposeArguments.add("" + model);
-        } else {
-            cellposeArguments.add("None");
-        }
+        cellposeArguments.add(Objects.requireNonNullElse(model, "None"));
 
         this.parameters.forEach((parameter, value) -> {
             cellposeArguments.add("--" + parameter);
@@ -966,7 +939,7 @@ public class Cellpose2D {
         });
 
         // Some people may deactivate this...
-        if( this.useGPU ) cellposeArguments.add("--use_gpu");
+        if (this.useGPU) cellposeArguments.add("--use_gpu");
 
         cellposeArguments.add("--verbose");
 
@@ -1008,7 +981,7 @@ public class Cellpose2D {
      * Runs the python script "run-cellpose-qc.py", which should be in the QuPath Extensions folder
      *
      * @return the results table with the QC metrics or null
-     * @throws IOException         if the python script is not found
+     * @throws IOException          if the python script is not found
      * @throws InterruptedException if the running the QC fails for some reason
      */
     private ResultsTable runCellposeQC() throws IOException, InterruptedException {
@@ -1038,7 +1011,7 @@ public class Cellpose2D {
 
 
         // The results are stored in the validation directory, open them as a results table
-        File qcResults = new File( getValidationDirectory(), "QC-Results" + File.separator + "Quality_Control for " + this.modelFile.getName() + ".csv");
+        File qcResults = new File(getValidationDirectory(), "QC-Results" + File.separator + "Quality_Control for " + this.modelFile.getName() + ".csv");
 
         if (!qcResults.exists()) {
             logger.warn("No QC results file name {} found in {}\nCheck in the logger for a potential reason", qcResults.getName(), qcResults.getParent());
@@ -1234,7 +1207,7 @@ public class Cellpose2D {
 
             try {
                 // Ignore the tile if it is too small
-                if( request.getWidth() < 10 || request.getHeight() < 10 ) {
+                if (request.getWidth() < 10 || request.getHeight() < 10) {
                     throw new Exception("Tile size too small, ignoring");
                 }
                 ImageWriterTools.writeImageRegion(originalServer, request, imageFile.getAbsolutePath());
@@ -1246,7 +1219,7 @@ public class Cellpose2D {
                 logger.error("Troubleshooting:\n - Check that the channel names are correct in the builder.");
             } catch (Exception e) {
                 logger.warn(e.getMessage());
-                logger.warn("Tile {} too small", request.toString());
+                logger.warn("Tile {} too small", request);
             }
         });
     }
@@ -1268,7 +1241,7 @@ public class Cellpose2D {
 
         project.getImageList().forEach(e -> {
 
-            ImageData imageData;
+            ImageData<BufferedImage> imageData;
             try {
 
                 imageData = e.readImageData();
@@ -1277,17 +1250,17 @@ public class Cellpose2D {
                 if (this.extendChannelOp != null) {
                     // Create an average channels server
                     ImageServer<BufferedImage> avgServer = new TransformedServerBuilder(imageData.getServer()).averageChannelProject().build();
-                    ImageData avgImageData = new ImageData(avgServer, imageData.getHierarchy(), ImageData.ImageType.OTHER);
+                    ImageData<BufferedImage> avgImageData = new ImageData<>(avgServer, imageData.getHierarchy(), ImageData.ImageType.OTHER);
                     // Create a filtered server channel
                     ImageDataOp op2 = ImageOps.buildImageDataOp(ColorTransforms.createMeanChannelTransform());
 
                     op2 = op2.appendOps(extendChannelOp);
-                    ImageServer opServer = ImageOps.buildServer( avgImageData, op2, imageData.getServer().getPixelCalibration() );
+                    ImageServer<BufferedImage> opServer = ImageOps.buildServer(avgImageData, op2, imageData.getServer().getPixelCalibration());
 
                     // Combine both into a new server
-                    ImageServer combinedServer = new TransformedServerBuilder( avgServer ).concatChannels( opServer ).build();
+                    ImageServer<BufferedImage> combinedServer = new TransformedServerBuilder(avgServer).concatChannels(opServer).build();
 
-                    imageData = new ImageData<>( combinedServer, imageData.getHierarchy(), ImageData.ImageType.OTHER );
+                    imageData = new ImageData<>(combinedServer, imageData.getHierarchy(), ImageData.ImageType.OTHER);
                 }
 
                 String imageName = GeneralTools.stripExtension(imageData.getServer().getMetadata().getName());
@@ -1361,12 +1334,12 @@ public class Cellpose2D {
      */
     private File moveRenameAndReturnModelFile() throws IOException {
 
-        if (this.outputModelName == null ) {
+        if (this.outputModelName == null) {
             this.outputModelName = "Custom_model";
         }
         // Append timestamp
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH_mm");
-        this.outputModelName += "_"+formatter.format(LocalDateTime.now());
+        this.outputModelName += "_" + formatter.format(LocalDateTime.now());
 
         File cellPoseModelFolder = new File(getTrainingDirectory(), "models");
         // Find the first file in there
@@ -1383,7 +1356,7 @@ public class Cellpose2D {
         return null;
     }
 
-    private Collection<CandidateObject> readObjectsFromFile2(TileFile tileFile){
+    private Collection<CandidateObject> readObjectsFromTileFile(TileFile tileFile) {
         RegionRequest request = tileFile.getTile();
 
         logger.info("Reading {}", tileFile.getLabelFile().getName());
@@ -1391,17 +1364,17 @@ public class Cellpose2D {
         ImagePlus label_imp = IJ.openImage(tileFile.getLabelFile().getAbsolutePath());
         ImageProcessor ip = label_imp.getProcessor();
 
-        Wand wand = new Wand( ip );
+        Wand wand = new Wand(ip);
 
         // create range list
         int width = ip.getWidth();
         int height = ip.getHeight();
 
-        int[] pixel_width = new int[ width ];
-        int[] pixel_height = new int[ height ];
+        int[] pixel_width = new int[width];
+        int[] pixel_height = new int[height];
 
-        IntStream.range(0,width-1).forEach(val -> pixel_width[val] = val);
-        IntStream.range(0,height-1).forEach(val -> pixel_height[val] = val);
+        IntStream.range(0, width - 1).forEach(val -> pixel_width[val] = val);
+        IntStream.range(0, height - 1).forEach(val -> pixel_height[val] = val);
 
         /*
          * Will iterate through pixels, when getPixel > 0 ,
@@ -1413,20 +1386,20 @@ public class Cellpose2D {
         ip.setColor(0);
         List<CandidateObject> rois = new ArrayList<>();
 
-        for ( int y_coord : pixel_height) {
-            for (int x_coord : pixel_width) {
-                float val = ip.getf(x_coord, y_coord);
+        for (int yCoordinate : pixel_height) {
+            for (int xCoordinate : pixel_width) {
+                float val = ip.getf(xCoordinate, yCoordinate);
                 if (val > 0.0) {
                     // use the magic wand at this coordinate
-                    wand.autoOutline(x_coord, y_coord, val, val);
-                    // if there is a region , then it has npoints
+                    wand.autoOutline(xCoordinate, yCoordinate, val, val);
+                    // if there is a region, then the wand has points
                     if (wand.npoints > 0) {
                         // get the Polygon, fill with 0 and add to the manager
                         Roi roi = new PolygonRoi(wand.xpoints, wand.ypoints, wand.npoints, Roi.FREEROI);
                         // Name the Roi with the position in the stack followed by the label ID
                         // ip.fill should use roi, otherwise make a rectangle that erases surrounding pixels
 
-                        CandidateObject o = new CandidateObject(IJTools.convertToROI(roi, -1*request.getX(), -1*request.getY() , request.getDownsample(), request.getImagePlane()).getGeometry(), tileFile.getParent());
+                        CandidateObject o = new CandidateObject(IJTools.convertToROI(roi, -1 * request.getX() / request.getDownsample(), -1 * request.getY() / request.getDownsample(), request.getDownsample(), request.getImagePlane()).getGeometry(), tileFile.getParent());
 
                         rois.add(o);
                         ip.fill(roi);
@@ -1437,13 +1410,14 @@ public class Cellpose2D {
         label_imp.close();
         return rois;
     }
+
     /**
      * convert a label image to a collection of Geometry objects
+     *
      * @param tileFile the current tileFile we are processing
      * @return a collection of CandidateObject that will be added to the total objects
-     * @throws IOException in case there was a problem reading the label file
      */
-    private Collection<CandidateObject> readObjectsFromFile(TileFile tileFile) {
+    private Collection<CandidateObject> readObjectsFromFileOld(TileFile tileFile) {
 
         logger.info("Reading objects from file {}", tileFile.getLabelFile().getName());
         try {
@@ -1479,6 +1453,34 @@ public class Cellpose2D {
         return Collections.emptyList();
     }
 
+
+    public enum LogParser {
+
+        // Cellpose 2 pattern when training : "Look for "Epoch 0, Time  2.3s, Loss 1.0758, Loss Test 0.6007, LR 0.2000"
+        // Cellpose 3 pattern when training : "5, train_loss=2.6546, test_loss=2.0054, LR=0.1111, time 2.56s"
+        // Omnipose pattern when training   : "Train epoch: 10 | Time: 0.22min | last epoch: 0.74s | <sec/epoch>: 0.73s | <sec/batch>: 0.33s | <Batch Loss>: 5.076259 | <Epoch Loss>: 4.429341"
+        // WARNING: Currently Omnipose does not provide any output to the validation loss (Test loss in Cellpose)
+        CP2("Cellpose v2", ".*Epoch\\s*(?<epoch>\\d+),\\s*Time\\s*(?<time>\\d+\\.\\d)s,\\s*Loss\\s*(?<loss>\\d+\\.\\d+),\\s*Loss Test\\s*(?<val>\\d+\\.\\d+),\\s*LR\\s*(?<lr>\\d+\\.\\d+).*"),
+        CP3("Cellpose v3", ".* (?<epoch>\\d+), train_loss=(?<loss>\\d+\\.\\d+), test_loss=(?<val>\\d+\\.\\d+), LR=(?<lr>\\d+\\.\\d+), time (?<time>\\d+\\.\\d+)s.*"),
+        OMNI("Omnipose", ".*Train epoch: (?<epoch>\\d+) \\| Time: (?<time>\\d+\\.\\d+)min .*\\<Epoch Loss\\>: (?<loss>\\d+\\.\\d+).*");
+
+        private final String name;
+        private final Pattern pattern;
+
+        LogParser(String name, String regex) {
+            this.name = name;
+            this.pattern = Pattern.compile(regex);
+        }
+
+        public String getName() {
+            return this.name;
+        }
+
+        public Pattern getPattern() {
+            return this.pattern;
+        }
+    }
+
     /**
      * Static class to hold the correspondence between a
      * RegionRequest and a saved file.
@@ -1496,9 +1498,6 @@ public class Cellpose2D {
             this.request = request;
             this.parent = parent;
             this.imageFile = imageFile;
-        }
-        public void setCandidates(Collection<CandidateObject> candidates) {
-            this.candidates = candidates;
         }
 
         public File getImageFile() {
@@ -1520,6 +1519,10 @@ public class Cellpose2D {
         public Collection<CandidateObject> getCandidates() {
             return this.candidates;
         }
+
+        public void setCandidates(Collection<CandidateObject> candidates) {
+            this.candidates = candidates;
+        }
     }
 
     /**
@@ -1528,7 +1531,7 @@ public class Cellpose2D {
     private static class CandidateObject {
         private final double area;
         private Geometry geometry;
-        private PathObject parent; // Perhaps this duplicated things a bit but we need it to sort the data
+        private final PathObject parent; // Perhaps this duplicated things a bit, but we need it to sort the data
 
         CandidateObject(Geometry geom, PathObject parent) {
             this.geometry = geom;
@@ -1551,26 +1554,5 @@ public class Cellpose2D {
             }
             geometry = geometry.getGeometryN(index);
         }
-    }
-    public enum LogParser {
-
-        // Cellpose 2 pattern when training : "Look for "Epoch 0, Time  2.3s, Loss 1.0758, Loss Test 0.6007, LR 0.2000"
-        // Cellpose 3 pattern when training : "5, train_loss=2.6546, test_loss=2.0054, LR=0.1111, time 2.56s"
-        // Omnipose pattern when training   : "Train epoch: 10 | Time: 0.22min | last epoch: 0.74s | <sec/epoch>: 0.73s | <sec/batch>: 0.33s | <Batch Loss>: 5.076259 | <Epoch Loss>: 4.429341"
-        // WARNING: Currently Omnipose does not provide any output to the validation loss (Test loss in Cellpose)
-        CP2("Cellpose v2", ".*Epoch\\s*(?<epoch>\\d+),\\s*Time\\s*(?<time>\\d+\\.\\d)s,\\s*Loss\\s*(?<loss>\\d+\\.\\d+),\\s*Loss Test\\s*(?<val>\\d+\\.\\d+),\\s*LR\\s*(?<lr>\\d+\\.\\d+).*"),
-        CP3( "Cellpose v3", ".* (?<epoch>\\d+), train_loss=(?<loss>\\d+\\.\\d+), test_loss=(?<val>\\d+\\.\\d+), LR=(?<lr>\\d+\\.\\d+), time (?<time>\\d+\\.\\d+)s.*"),
-        OMNI("Omnipose", ".*Train epoch: (?<epoch>\\d+) \\| Time: (?<time>\\d+\\.\\d+)min .*\\<Epoch Loss\\>: (?<loss>\\d+\\.\\d+).*");
-
-        private final String name;
-        private final Pattern pattern;
-
-        LogParser(String name, String regex) {
-            this.name = name;
-            this.pattern = Pattern.compile(regex);
-        }
-
-        public String getName() {return this.name;}
-        public Pattern getPattern() {return this.pattern;}
     }
 }
