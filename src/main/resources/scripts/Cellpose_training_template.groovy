@@ -17,18 +17,18 @@
  */
 
 // First we need to create a Cellpose2D builder and add all parameters that we want to use for training
-def cellpose = Cellpose2D.builder("cyto") // Can choose "None" if you want to train from scratch
-        .channels("DAPI", "CY3")  // or work with .cellposeChannels( channel1, channel2 ) and follow the cellpose way
-//                .preprocess(ImageOps.Filters.gaussianBlur(1)) // Optional preprocessing QuPath Ops
-//                .epochs(500)             // Optional: will default to 500
-//                .groundTruthDirectory( new File("/my/ground/truth/folder")) // Optional: If you wish to save your GT elsewhere than the QuPath Project
-//                .learningRate(0.2)       // Optional: Will default to 0.2
-//                .batchSize(8)            // Optional: Will default to 8
-//                .minTrainMasks(5)        // Optional: Will default to 5
-//                .addParameter("save_flows")      // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
-//                .addParameter("anisotropy", "3") // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
-//                .modelDirectory( new File("My/folder/for/models")) // Optional place to store resulting model. Will default to QuPath project root, and make a 'models' folder
-//                .saveBuilder("My Builder") // Optional: Will save a builder json file that can be reloaded with Cellpose2D.builder(File builderFile)
+def cellpose = Cellpose2D.builder( "cyto3" )    // Can choose "None" if you want to train from scratch
+        .channels( "DAPI", "CY3" )                         // or work with .cellposeChannels( channel1, channel2 ) and follow the cellpose way
+//                .preprocess( ImageOps.Filters.gaussianBlur( 1 ) ) // Optional preprocessing QuPath Ops
+//                .epochs(500)                                      // Optional: will default to 500
+//                .groundTruthDirectory( new File( "/my/ground/truth/folder" ) ) // Optional: If you wish to save your GT elsewhere than the QuPath Project
+//                .learningRate(0.2)                                // Optional: Will default to 0.2
+//                .batchSize(8)                                     // Optional: Will default to 8
+//                .minTrainMasks(5)                                 // Optional: Will default to 5
+//                .addParameter("save_flows")                       // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
+//                .addParameter("anisotropy", "3")                  // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
+//                .modelDirectory( new File("D:/models/" ) )        // Optional place to store resulting model. Will default to QuPath project root, and make a 'models' folder
+//                .saveBuilder("My Builder")                        // Optional: Will save a builder json file that can be reloaded with Cellpose2D.builder(File builderFile)
         .build()
 
 // Now we can train a new model
