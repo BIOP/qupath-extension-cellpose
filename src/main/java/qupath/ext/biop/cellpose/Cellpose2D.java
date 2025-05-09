@@ -138,6 +138,7 @@ public class Cellpose2D {
 
     // CELLPOSE PARAMETERS
     public boolean useGPU;
+    public boolean saveTrainingImages;
     public String outputModelName;
     public File groundTruthDirectory;
     protected CellposeSetup cellposeSetup = CellposeSetup.getInstance();
@@ -882,11 +883,12 @@ public class Cellpose2D {
 
         try {
 
-            // Clear a previous run
-            cleanDirectory(this.groundTruthDirectory);
+            if(this.saveTrainingImages) {
+                // Clear a previous run
+                cleanDirectory(this.groundTruthDirectory);
 
-            saveTrainingImages();
-
+                saveTrainingImages();
+            }
             runTraining();
 
             this.modelFile = moveRenameAndReturnModelFile();
