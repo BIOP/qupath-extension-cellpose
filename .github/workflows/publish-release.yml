@@ -5,29 +5,17 @@ on:
 
 jobs:
   publish:
-
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
+      - uses: actions/checkout@v2
+      - uses: actions/setup-java@v2
         with:
           java-version: '17'
-          distribution: 'temurin'
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
-      - name: Validate Gradle wrapper
-        uses: gradle/wrapper-validation-action@v1
-      - name: Publish snapshot
-        uses: gradle/gradle-build-action@v2.4.2
-        with:
-          arguments: publish -P release=true
+          distribution: 'adopt-hotspot'
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+      - name: Publish package
+        run: ./gradlew publish -P toolchain=17 -P release=true
         env:
           MAVEN_USER: ${{ secrets.MAVEN_USER }}
           MAVEN_PASS: ${{ secrets.MAVEN_PASS }}
-      - uses: actions/upload-artifact@v3
-        with:
-          name: qupath-cellpose-extension-release-jar
-          path: build/libs
-          retention-days: 7
