@@ -1,8 +1,7 @@
 name: Publish release to SciJava Maven
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 jobs:
   publish:
