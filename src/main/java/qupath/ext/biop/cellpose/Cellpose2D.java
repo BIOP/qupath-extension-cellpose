@@ -135,10 +135,11 @@ public class Cellpose2D {
     protected Collection<ObjectMeasurements.Compartments> compartments;
     protected Collection<ObjectMeasurements.Measurements> measurements;
     protected int nThreads = -1;
+    public boolean saveTrainingImages;
 
     // CELLPOSE PARAMETERS
     public boolean useGPU;
-    public boolean saveTrainingImages;
+    public boolean useTestDir;
     public String outputModelName;
     public File groundTruthDirectory;
     protected CellposeSetup cellposeSetup = CellposeSetup.getInstance();
@@ -927,8 +928,10 @@ public class Cellpose2D {
         cellposeArguments.add("--dir");
         cellposeArguments.add(getTrainingDirectory().getAbsolutePath());
 
-        cellposeArguments.add("--test_dir");
-        cellposeArguments.add(getValidationDirectory().getAbsolutePath());
+        if(this.useTestDir) {
+            cellposeArguments.add("--test_dir");
+            cellposeArguments.add(getValidationDirectory().getAbsolutePath());
+        }
 
         cellposeArguments.add("--pretrained_model");
         cellposeArguments.add(Objects.requireNonNullElse(model, "None"));

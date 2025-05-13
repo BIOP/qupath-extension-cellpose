@@ -29,7 +29,8 @@ def cellpose = Cellpose2D.builder( "cyto3" )    // Can choose "None" if you want
 //                .addParameter("anisotropy", "3")                  // Any parameter from cellpose not available in the builder. See https://cellpose.readthedocs.io/en/latest/command.html
 //                .modelDirectory( new File("D:/models/" ) )        // Optional place to store resulting model. Will default to QuPath project root, and make a 'models' folder
 //                .saveBuilder("My Builder")                        // Optional: Will save a builder json file that can be reloaded with Cellpose2D.builder(File builderFile)
-//                .saveTrainingImages(false)                        // Optional: Will skip resaving training images. WARNING: TO USE AT YOUR OWN RISK !!!
+//                .saveTrainingImages(false)                        // Optional - default true : Will skip resaving training images. WARNING: TO USE AT YOUR OWN RISK !!!
+//                .useTestDir(false)                                // Optional - default true : put false ONLY TO TRAIN OMNIPOSE MODELS
         .build()
 
 // Now we can train a new model

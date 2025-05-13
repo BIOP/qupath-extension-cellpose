@@ -96,6 +96,7 @@ public class CellposeBuilder {
 
     private boolean doReadResultsAsynchronously = false;
     private boolean useGPU = true;
+    private boolean useTestDir = true;
     private boolean saveTrainingImages = true;
     private String outputModelName;
 
@@ -144,6 +145,17 @@ public class CellposeBuilder {
      */
     public CellposeBuilder useGPU( boolean useGPU ) {
         this.useGPU = useGPU;
+
+        return this;
+    }
+
+    /**
+     * overwrite useTestDir
+     * @param useTestDir add or remove the option
+     * @return this builder
+     */
+    public CellposeBuilder useTestDir( boolean useTestDir ) {
+        this.useTestDir = useTestDir;
 
         return this;
     }
@@ -807,6 +819,7 @@ public class CellposeBuilder {
         cellpose.nThreads = nThreads;
 
         cellpose.useGPU = useGPU;
+        cellpose.useTestDir = useTestDir;
         cellpose.saveTrainingImages = saveTrainingImages;
 
         // Check the model. If it is a file, then it is a custom model
