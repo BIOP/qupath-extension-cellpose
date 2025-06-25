@@ -28,7 +28,7 @@ As this code is neither novel nor entirely original, there is no linked publicat
 ## Code authorship
 **Author**: Olivier Burri (1)
 
-**Contributors**: Nicolas Chiaruttini (1), Romain Guiet (1)
+**Contributors**: Nicolas Chiaruttini (1), Romain Guiet (1), Rémy Dornier (1)
 
 This code heavily makes use of functions created by Pete Bankhead and the QuPath team for their [StarDist Extension](https://github.com/qupath/qupath-extension-stardist)
 
