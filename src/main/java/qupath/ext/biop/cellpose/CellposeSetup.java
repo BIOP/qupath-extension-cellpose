@@ -7,6 +7,7 @@ import java.io.File;
 public class CellposeSetup {
     private static final CellposeSetup instance = new CellposeSetup();
     private String cellposePythonPath = null;
+    private String cellposeSAMPythonPath = null;
     private String omniposePythonPath = null;
     private String condaPath = null;
 
@@ -18,9 +19,16 @@ public class CellposeSetup {
         return cellposePythonPath;
     }
 
+    public String getCellposeSAMPythonPath() { return cellposeSAMPythonPath; }
+
     public void setCellposePythonPath(String path) {
         checkPath( path );
         this.cellposePythonPath = path;
+    }
+
+    public void setCellposeSAMPythonPath(String path) {
+        checkPath( path );
+        this.cellposeSAMPythonPath = path;
     }
 
     public String getOmniposePythonPath() {
