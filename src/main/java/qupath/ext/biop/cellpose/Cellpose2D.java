@@ -51,7 +51,7 @@ import qupath.lib.analysis.images.SimpleImages;
 import qupath.lib.common.ColorTools;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.geom.ImmutableDimension;
-import qupath.lib.gui.ExtensionClassLoader;
+import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.scripting.QPEx;
 import qupath.lib.images.ImageData;
 import qupath.lib.images.servers.*;
@@ -996,7 +996,7 @@ public class Cellpose2D {
         qcFolder.mkdirs();
 
         // Let's check if the QC notebook is available in the 'extensions' folder
-        File extensionsDir = ExtensionClassLoader.getInstance().getExtensionsDirectory().toFile();
+        File extensionsDir = new File(String.valueOf(QuPathGUI.getExtensionCatalogManager().getExtensionDirectoryPath()));
         File qcPythonFile = new File(extensionsDir, "run-cellpose-qc.py");
 
         if (!qcPythonFile.exists()) {

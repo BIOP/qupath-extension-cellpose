@@ -34,19 +34,13 @@ val qupathVersion = rootProject.version.toString()
 
 dependencies {
     implementation(libs.qupath.fxtras)
+    implementation(libs.extensionmanager)
     implementation("commons-io:commons-io:2.15.0")
     implementation(libs.bundles.logging)
 
     // For testing
     testImplementation(libs.junit)
 }
-
-/*dependencies {
-    implementation "io.github.qupath:qupath-gui-fx:${qupathVersion}"
-    implementation libs.qupath.fxtras
-    implementation "commons-io:commons-io:2.15.0"
-    implementation libs.bundles.logging
-}*/
 
 tasks.withType<ProcessResources> {
     from ("${projectDir}/LICENSE") {
