@@ -6,9 +6,9 @@ import java.io.File;
 
 public class CellposeSetup {
     private static final CellposeSetup instance = new CellposeSetup();
-    private String cellposePythonPath = null;
-    private String omniposePythonPath = null;
-    private String condaPath = null;
+    private String cellposePythonPath = "";
+    private String omniposePythonPath = "";
+    private String condaPath = "";
 
     public static CellposeSetup getInstance() {
         return instance;
