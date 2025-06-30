@@ -150,6 +150,7 @@ public class Cellpose2D {
     protected Integer overlap;
     protected File modelDirectory;
     protected boolean doReadResultsAsynchronously;
+    protected boolean useCellposeSAM;
     File tempDirectory;
     private List<String> theLog;
     private ResultsTable trainingResults;
@@ -701,8 +702,13 @@ public class Cellpose2D {
     private VirtualEnvironmentRunner getVirtualEnvironmentRunner() {
 
         // Make sure that cellposeSetup.getCellposePythonPath() is not empty
-        if (cellposeSetup.getCellposePythonPath().isEmpty()) {
+        if (cellposeSetup.getCellposePythonPath().isEmpty() && !this.useCellposeSAM) {
             throw new IllegalStateException("Cellpose python path is empty. Please set it in Edit > Preferences");
+        }
+
+        // Make sure that cellposeSetup.getCellposeSAMPythonPath() is not empty
+        if (cellposeSetup.getCellposeSAMPythonPath().isEmpty() && this.useCellposeSAM) {
+            throw new IllegalStateException("CellposeSAM python path is empty. Please set it in Edit > Preferences");
         }
 
         // Change the envType based on the setup options
@@ -714,7 +720,7 @@ public class Cellpose2D {
         }
 
         // Set python executable to switch between Omnipose and Cellpose
-        String pythonPath = cellposeSetup.getCellposePythonPath();
+        String pythonPath = this.useCellposeSAM ? cellposeSetup.getCellposeSAMPythonPath() : cellposeSetup.getCellposePythonPath();
         if (this.parameters.containsKey("omni") && !cellposeSetup.getOmniposePythonPath().isEmpty())
             pythonPath = cellposeSetup.getOmniposePythonPath();
 

@@ -98,6 +98,7 @@ public class CellposeBuilder {
     private boolean useGPU = true;
     private boolean useTestDir = true;
     private boolean saveTrainingImages = true;
+    private boolean useCellposeSAM = false;
     private String outputModelName;
 
     /**
@@ -428,7 +429,7 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder measureShape() {
-        measureShape = true;
+        this.measureShape = true;
         return this;
     }
 
@@ -606,9 +607,21 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder useOmnipose() {
-        if (cellposeSetup.getOmniposePythonPath() == "")
+        if (this.cellposeSetup.getOmniposePythonPath().isEmpty())
             logger.warn("Omnipose environment path not set. Using cellpose path instead.");
         addParameter("omni");
+        return this;
+    }
+
+    /**
+     * Use Omnipose implementation: Adds --omni flag to command
+     *
+     * @return this builder
+     */
+    public CellposeBuilder useCellposeSAM() {
+        if (this.cellposeSetup.getCellposeSAMPythonPath().isEmpty())
+            logger.warn("Cellpose SAM environment path not set. Using cellpose path instead.");
+        this.useCellposeSAM = true;
         return this;
     }
 
@@ -816,11 +829,11 @@ public class CellposeBuilder {
         Cellpose2D cellpose = new Cellpose2D();
 
         // Give it the number of threads to use
-        cellpose.nThreads = nThreads;
+        cellpose.nThreads = this.nThreads;
 
-        cellpose.useGPU = useGPU;
-        cellpose.useTestDir = useTestDir;
-        cellpose.saveTrainingImages = saveTrainingImages;
+        cellpose.useGPU = this.useGPU;
+        cellpose.useTestDir = this.useTestDir;
+        cellpose.saveTrainingImages = this.saveTrainingImages;
 
         // Check the model. If it is a file, then it is a custom model
         File file = new File(this.modelNameOrPath);
@@ -852,45 +865,46 @@ public class CellposeBuilder {
             this.modelDirectory.mkdirs();
         }
 
-        cellpose.outputModelName = outputModelName;
-        cellpose.modelDirectory = modelDirectory;
-        cellpose.groundTruthDirectory = groundTruthDirectory;
-        cellpose.tempDirectory = tempDirectory;
-        cellpose.doReadResultsAsynchronously = doReadResultsAsynchronously;
+        cellpose.outputModelName = this.outputModelName;
+        cellpose.modelDirectory = this.modelDirectory;
+        cellpose.groundTruthDirectory = this.groundTruthDirectory;
+        cellpose.tempDirectory = this.tempDirectory;
+        cellpose.doReadResultsAsynchronously = this.doReadResultsAsynchronously;
+        cellpose.useCellposeSAM = this.useCellposeSAM;
 
-        cellpose.extendChannelOp = extendChannelOp;
+        cellpose.extendChannelOp = this.extendChannelOp;
 
         // TODO make compatible with --all_channels
         if (this.channels.length > 2) {
-            logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two", channels.length);
+            logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two",this.channels.length);
             this.channels = Arrays.copyOf(this.channels, 2);
         }
 
-        cellpose.op = ImageOps.buildImageDataOp(channels);
+        cellpose.op = ImageOps.buildImageDataOp(this.channels);
 
         // these are all the cellpose parameters we wish to send to the command line.
         cellpose.parameters = this.cellposeParameters;
 
-        cellpose.globalPreprocess = globalPreprocessing;
-        cellpose.preprocess = new ArrayList<>(preprocessing);
+        cellpose.globalPreprocess = this.globalPreprocessing;
+        cellpose.preprocess = new ArrayList<>(this.preprocessing);
 
-        cellpose.pixelSize = pixelSize;
-        cellpose.cellConstrainScale = cellConstrainScale;
-        cellpose.cellExpansion = cellExpansion;
-        cellpose.tileWidth = tileWidth;
-        cellpose.tileHeight = tileHeight;
-        cellpose.ignoreCellOverlaps = ignoreCellOverlaps;
-        cellpose.measureShape = measureShape;
-        cellpose.simplifyDistance = simplifyDistance;
-        cellpose.constrainToParent = constrainToParent;
-        cellpose.creatorFun = creatorFun;
-        cellpose.globalPathClass = globalPathClass;
-        cellpose.outputModelName = outputModelName;
+        cellpose.pixelSize = this.pixelSize;
+        cellpose.cellConstrainScale = this.cellConstrainScale;
+        cellpose.cellExpansion = this.cellExpansion;
+        cellpose.tileWidth = this.tileWidth;
+        cellpose.tileHeight = this.tileHeight;
+        cellpose.ignoreCellOverlaps = this.ignoreCellOverlaps;
+        cellpose.measureShape = this.measureShape;
+        cellpose.simplifyDistance = this.simplifyDistance;
+        cellpose.constrainToParent = this.constrainToParent;
+        cellpose.creatorFun = this.creatorFun;
+        cellpose.globalPathClass = this.globalPathClass;
+        cellpose.outputModelName = this.outputModelName;
 
-        cellpose.compartments = new LinkedHashSet<>(compartments);
+        cellpose.compartments = new LinkedHashSet<>(this.compartments);
 
-        if (measurements != null)
-            cellpose.measurements = new LinkedHashSet<>(measurements);
+        if (this.measurements != null)
+            cellpose.measurements = new LinkedHashSet<>(this.measurements);
         else
             cellpose.measurements = Collections.emptyList();
 
@@ -915,12 +929,12 @@ public class CellposeBuilder {
         logger.info("If tiling is necessary, {} pixels overlap will be taken between tiles", cellpose.overlap);
 
         // If we would like to save the builder we can do it here thanks to Serialization and lots of magic by Pete
-        if (saveBuilder) {
+        if (this.saveBuilder) {
             Gson gson = GsonTools.getInstance(true);
 
             DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH'h'mm");
             LocalDateTime now = LocalDateTime.now();
-            File savePath = new File(modelDirectory, builderName + "_" + dtf.format(now) + ".json");
+            File savePath = new File(this.modelDirectory, this.builderName + "_" + dtf.format(now) + ".json");
 
             try {
                 FileWriter fw = new FileWriter(savePath);

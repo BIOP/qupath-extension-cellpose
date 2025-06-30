@@ -13,7 +13,6 @@ import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.gui.tools.MenuTools;
 
-import java.io.File;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -21,7 +20,7 @@ import java.util.LinkedHashMap;
 /**
  * Install Cellpose as an extension.
  * <p>
- * Ibnstalls Cellpose into QuPath, adding some metadata and adds the necessary global variables to QuPath's Preferences
+ * Installs Cellpose into QuPath, adding some metadata and adds the necessary global variables to QuPath's Preferences
  *
  * @author Olivier Burri
  */
@@ -64,19 +63,21 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
         // Get a copy of the cellpose options
         CellposeSetup options = CellposeSetup.getInstance();
 
-
         // Create the options we need
         StringProperty cellposePath = PathPrefs.createPersistentPreference("cellposePythonPath", "");
+        StringProperty cellposeSAMPath = PathPrefs.createPersistentPreference("cellposeSAMPythonPath", "");
         StringProperty omniposePath = PathPrefs.createPersistentPreference("omniposePythonPath", "");
         StringProperty condaPath = PathPrefs.createPersistentPreference("condaPath", "");
 
         //Set options to current values
         options.setCellposePythonPath(cellposePath.get());
+        options.setCellposeSAMPythonPath(cellposeSAMPath.get());
         options.setOmniposePythonPath(omniposePath.get());
         options.setCondaPath(condaPath.get());
 
         // Listen for property changes
         cellposePath.addListener((v, o, n) -> options.setCellposePythonPath(n));
+        cellposeSAMPath.addListener((v, o, n) -> options.setCellposeSAMPythonPath(n));
         omniposePath.addListener((v, o, n) -> options.setOmniposePythonPath(n));
         condaPath.addListener((v, o, n) -> options.setCondaPath(n));
 
@@ -85,6 +86,13 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
                 .name("Cellpose 'python.exe' location")
                 .category("Cellpose/Omnipose")
                 .description("Enter the full path to your cellpose environment, including 'python.exe'\nDo not include quotes (\') or double quotes (\") around the path.")
+                .build();
+
+        PropertySheet.Item cellposeSAMPathItem = new PropertyItemBuilder<>(cellposeSAMPath, String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
+                .name("Cellpose SAM 'python.exe' location")
+                .category("Cellpose/Omnipose")
+                .description("Enter the full path to your cellposeSAM environment, including 'python.exe'\nDo not include quotes (\') or double quotes (\") around the path.")
                 .build();
 
         PropertySheet.Item omniposePathItem = new PropertyItemBuilder<>(omniposePath, String.class)
@@ -102,7 +110,7 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
                 .build();
 
         // Add Permanent Preferences and Populate Preferences
-        QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems().addAll(cellposePathItem, omniposePathItem, condaPathItem);
+        QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems().addAll(cellposePathItem, cellposeSAMPathItem, omniposePathItem, condaPathItem);
 
     }
 
