@@ -18,7 +18,7 @@ repositories {
 
 
 group = "io.github.qupath"
-version = "0.10.2-SNAPSHOT"
+version = "0.11.0-SNAPSHOT"
 description = "QuPath extension to use Cellpose"
 
 var archiveBaseName = "qupath-extension-cellpose"
