@@ -8,6 +8,7 @@ public class CellposeSetup {
     private static final CellposeSetup instance = new CellposeSetup();
     private String cellposePythonPath = "";
     private String omniposePythonPath = "";
+    private String cellposeSAMPythonPath = "";
     private String condaPath = "";
 
     public static CellposeSetup getInstance() {
@@ -18,9 +19,16 @@ public class CellposeSetup {
         return cellposePythonPath;
     }
 
+    public String getCellposeSAMPythonPath() { return cellposeSAMPythonPath; }
+
     public void setCellposePythonPath(String path) {
         checkPath( path );
         this.cellposePythonPath = path;
+    }
+
+    public void setCellposeSAMPythonPath(String path) {
+        checkPath( path );
+        this.cellposeSAMPythonPath = path;
     }
 
     public String getOmniposePythonPath() {
