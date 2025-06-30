@@ -115,7 +115,7 @@ public class CellposeBuilder {
             gson.fromJson(new FileReader(builderFile), CellposeBuilder.class);
             logger.info("Builder parameters loaded from {}", builderFile);
         } catch (FileNotFoundException e) {
-            logger.error("Could not load builder from " + builderFile.getAbsolutePath(), e);
+            logger.error("Could not load builder from {}", builderFile.getAbsolutePath(), e);
         }
     }
 
@@ -286,8 +286,8 @@ public class CellposeBuilder {
 
     /**
      * Specify channels by name. Useful for detecting nuclei for one channel
-     * within a multi-channel image, or potentially for trained models that
-     * support multi-channel input.
+     * within a multichannel image, or potentially for trained models that
+     * support multichannel input.
      *
      * @param channels 0-based indices of the channels to use
      * @return this builder
@@ -577,8 +577,8 @@ public class CellposeBuilder {
     /**
      * Generic means of adding a cellpose parameter
      *
-     * @param flagName  the name of the flag, eg. "save_every"
-     * @param flagValue the value that is linked to the flag, eg. "20". Can be an empty string or null if it is not needed
+     * @param flagName  the name of the flag, e.g. "save_every"
+     * @param flagValue the value that is linked to the flag, e.g. "20". Can be an empty string or null if it is not needed
      * @return this builder
      * @see <a href="https://cellpose.readthedocs.io/en/latest/command.html#input-settings">the cellpose documentation</a> for a list of available flags
      */
@@ -591,7 +591,7 @@ public class CellposeBuilder {
     /**
      * Generic means of adding a cellpose parameter
      *
-     * @param flagName the name of the flag, eg. "save_every"	 * @param flagName the name of the flag, eg. "save_every"
+     * @param flagName the name of the flag, e.g. "save_every"	 * @param flagName the name of the flag, e.g. "save_every"
      * @return
      * @see <a href="https://cellpose.readthedocs.io/en/latest/command.html#input-settings">the cellpose documentation</a> for a list of available flags
      */
@@ -930,7 +930,7 @@ public class CellposeBuilder {
                 logger.info("Cellpose Builder serialized and saved to {}", savePath);
 
             } catch (IOException e) {
-                logger.error("Could not save builder to JSON file " + savePath.getAbsolutePath(), e);
+                logger.error("Could not save builder to JSON file {}", savePath.getAbsolutePath(), e);
             }
         }
 

@@ -77,7 +77,7 @@ public class VirtualEnvironmentRunner {
     }
 
     /**
-     * This methods returns the command that will be needed by the {@link ProcessBuilder}, to start Python in the
+     * This method returns the command that will be needed by the {@link ProcessBuilder}, to start Python in the
      * desired virtual environment type.
      * Issue is that under windows you can just pile a bunch of Strings together, and it runs
      * In Mac or UNIX, the bash -c command must be followed by the full command enclosed in quotes
@@ -104,7 +104,7 @@ public class VirtualEnvironmentRunner {
                         if( condaCommand == null ) {
                             condaCommand = "conda";
                         }
-                        // Adjust path to the folder with the env name based on the python location. In Linux/MacOS it's in the 'bin' sub folder
+                        // Adjust path to the folder with the env name based on the python location. In Linux/macOS it's in the 'bin' sub folder
                         cmd.addAll(Arrays.asList(condaCommand, "activate", new File(pythonPath).getParentFile().getParent(), ";", "python"));
                         break;
                 }
@@ -182,7 +182,7 @@ public class VirtualEnvironmentRunner {
         }
 
 
-        // Try to make a command that is fully readable and that can be copy pasted
+        // Try to make a command that is fully readable and that can be copied and pasted
         List<String> printable = shell.stream().map(s -> {
             // add quotes if there are spaces in the paths
             if (s.contains(" "))

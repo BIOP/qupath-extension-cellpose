@@ -15,6 +15,7 @@ import qupath.lib.gui.tools.MenuTools;
 
 import java.io.File;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 
 /**
@@ -50,7 +51,7 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
             String name = entry.getValue();
             String command = entry.getKey();
             try (InputStream stream = CellposeExtension.class.getClassLoader().getResourceAsStream(name)) {
-                String script = new String(stream.readAllBytes(), "UTF-8");
+                String script = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
                 if (script != null) {
                     MenuTools.addMenuItems(
                             qupath.getMenu("Extensions>Cellpose", true),

@@ -253,7 +253,7 @@ public class Cellpose2D {
                 try {
                     pool.awaitTermination(2, TimeUnit.DAYS);
                 } catch (InterruptedException e) {
-                    logger.warn("Process was interrupted! " + e.getLocalizedMessage(), e);
+                    logger.warn("Process was interrupted! {}", e.getLocalizedMessage(), e);
                 }
             }
         } else {
@@ -430,7 +430,7 @@ public class Cellpose2D {
                         try {
                             return convertToObject(n, parent.getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
                         } catch (Exception oe) {
-                            logger.warn("Error converting to object: " + oe.getLocalizedMessage(), oe);
+                            logger.warn("Error converting to object: {}", oe.getLocalizedMessage(), oe);
                             return null;
                         }
                     }).filter(Objects::nonNull)
@@ -472,7 +472,7 @@ public class Cellpose2D {
                     try {
                         ObjectMeasurements.addIntensityMeasurements(server2, cell, finalDownsample, measurements, compartments);
                     } catch (IOException ie) {
-                        logger.info("Error adding intensity measurement: " + ie.getLocalizedMessage(), ie);
+                        logger.info("Error adding intensity measurement: {}", ie.getLocalizedMessage(), ie);
                     }
                 });
 
@@ -905,7 +905,7 @@ public class Cellpose2D {
             return modelFile;
 
         } catch (IOException | InterruptedException e) {
-            logger.error("Error while running cellpose training: " + e.getMessage(), e);
+            logger.error("Error while running cellpose training: {}", e.getMessage(), e);
         }
         return null;
     }
