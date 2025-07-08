@@ -78,10 +78,30 @@ import java.awt.image.BufferedImage;
 import java.awt.image.RenderedImage;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
-import java.util.concurrent.*;
+
+import java.util.AbstractMap;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.TreeMap;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -1002,12 +1022,25 @@ public class Cellpose2D {
         qcFolder.mkdirs();
 
         // Let's check if the QC notebook is available in the 'extensions' folder
-        File extensionsDir = new File(String.valueOf(QuPathGUI.getExtensionCatalogManager().getExtensionDirectoryPath()));
-        File qcPythonFile = new File(extensionsDir, "run-cellpose-qc.py");
+        String cellposeVersion = CellposeExtension.getExtensionVersion();
+        List<File> extensionDirList = QuPathGUI.getExtensionCatalogManager()
+                .getCatalogManagedInstalledJars()
+                .parallelStream()
+                .filter(e->e.toString().contains("qupath-extension-cellpose-"+cellposeVersion))
+                .map(Path::getParent)
+                .map(Path::toString)
+                .map(File::new)
+                .collect(Collectors.toList());
 
+        if(extensionDirList.isEmpty()){
+            logger.warn("Cellpose extension not installed ; cannot find QC script");
+            return null;
+        }
+
+        File qcPythonFile = new File(extensionDirList.getFirst(), "run-cellpose-qc.py");
         if (!qcPythonFile.exists()) {
             logger.warn("File {} was not found in {}.\nPlease download it from {}", qcPythonFile.getName(),
-                    extensionsDir.getAbsolutePath(),
+                    extensionDirList.getFirst().getAbsolutePath(),
                     new CellposeExtension().getRepository().getUrlString());
             return null;
         }

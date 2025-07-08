@@ -13,9 +13,17 @@ import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.gui.tools.MenuTools;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.jar.Attributes;
+import java.util.jar.Manifest;
+import java.util.stream.Collectors;
 
 /**
  * Install Cellpose as an extension.
@@ -136,5 +144,35 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
             return;
         }
         qupath.getScriptEditor().showScript("Cellpose detection", script);
+    }
+
+    protected static String getExtensionVersion(){
+        String versionString = null;
+        try {
+            List<URL> manifestList = Collections.list(CellposeExtension.class.getClassLoader().getResources("META-INF/MANIFEST.MF"))
+                    .parallelStream()
+                    .filter(e -> e.toString().contains("qupath-extension-cellpose") && !e.toString().contains("javadoc"))
+                    .sorted(Comparator.comparing(URL::toString))
+                    .collect(Collectors.toList());
+            Collections.reverse(manifestList);
+
+        for (URL url : manifestList) {
+                if (url == null)
+                    continue;
+                try (InputStream ignored = url.openStream()) {
+                    Manifest manifest = new Manifest(url.openStream());
+                    Attributes attributes = manifest.getMainAttributes();
+                    versionString = attributes.getValue("Implementation-Version");
+                    break;
+                } catch (IOException e) {
+                    logger.error("Error reading manifest", e);
+                } catch (IllegalArgumentException e) {
+                    logger.error("Error determining version: {}", e.getLocalizedMessage(), e);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error searching for build string", e);
+        }
+        return versionString;
     }
 }
