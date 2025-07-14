@@ -42,7 +42,7 @@ publishing {
             name = "SciJava"
             val releasesRepoUrl = "https://maven.scijava.org/content/repositories/releases"
             val snapshotsRepoUrl = "https://maven.scijava.org/content/repositories/snapshots"
-            url = uri(if (project.version.toString().endsWith("SNAPSHOT")) snapshotsRepoUrl else releasesRepoUrl)
+            url = if (project.hasProperty("release")) uri(releasesRepoUrl) else uri(snapshotsRepoUrl)
             credentials {
                 username = System.getenv("MAVEN_USER")
                 password = System.getenv("MAVEN_PASS")
