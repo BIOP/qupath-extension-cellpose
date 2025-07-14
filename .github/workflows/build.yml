@@ -1,0 +1,17 @@
+name: Run gradle build
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+    branches:
+      - "main"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: qupath/actions/.github/workflows/gradle.yml@main

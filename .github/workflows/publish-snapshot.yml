@@ -4,25 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  publish:
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up JDK 21
-        uses: actions/setup-java@v3
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
-      - name: Validate Gradle wrapper
-        uses: gradle/wrapper-validation-action@v3
-      - name: Publish snapshot
-        uses: gradle/gradle-build-action@v3
-        with:
-          arguments: publish
-        env:
-          MAVEN_USER: ${{ secrets.MAVEN_USER }}
-          MAVEN_PASS: ${{ secrets.MAVEN_PASS }}
+  build:
+    name: Publish snapshot
+    uses: ./.github/workflows/maven.yml
+    secrets: inherit

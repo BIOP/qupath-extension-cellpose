@@ -1,0 +1,10 @@
+name: Make draft release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    uses: qupath/actions/.github/workflows/github-release.yml@main
