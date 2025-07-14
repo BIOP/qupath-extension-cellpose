@@ -4,11 +4,10 @@ plugins {
     id("qupath-conventions")
 }
 
-// TODO: Configure your extension here (please change the defaults!)
 qupathExtension {
     name = "qupath-extension-cellpose"
     group = "io.github.qupath"
-    version = "0.11.0-SNAPSHOT"
+    version = "0.11.0"
     description = "QuPath extension to use Cellpose"
     automaticModule = "qupath.ext.biop.cellpose"
 }
