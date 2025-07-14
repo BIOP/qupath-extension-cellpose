@@ -23,12 +23,6 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Add release flag if input variable is set
-        if: ${{ inputs.release }}
-        shell: bash
-        run: |
-          echo "RELEASE_FLAG='-Prelease'" >> $GITHUB_ENV
-
       - name: Publish
         shell: bash
         run: |
