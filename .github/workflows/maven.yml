@@ -13,9 +13,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v3
+      - uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -23,10 +23,26 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Publish
+      - name: Add release flag if input variable is set
+        if: ${{ inputs.release }}
         shell: bash
         run: |
-          ./gradlew publish -P toolchain=21 $RELEASE_FLAG
+          echo "RELEASE_FLAG='-Prelease'" >> $GITHUB_ENV
+
+      - name: Publish release
+        if: ${{ inputs.release }}
+        shell: bash
+        run: |
+          ./gradlew publish -Ptoolchain=21 -Prelease ${{ inputs.gradle-args }}
+        env:
+          MAVEN_USER: ${{ secrets.MAVEN_USER }}
+          MAVEN_PASS: ${{ secrets.MAVEN_PASS }}
+
+      - name: Publish snapshot
+        if: ${{ inputs.release == false }}
+        shell: bash
+        run: |
+          ./gradlew publish -Ptoolchain=21 ${{ inputs.gradle-args }}
         env:
           MAVEN_USER: ${{ secrets.MAVEN_USER }}
           MAVEN_PASS: ${{ secrets.MAVEN_PASS }}
