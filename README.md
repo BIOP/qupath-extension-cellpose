@@ -104,18 +104,17 @@ where `{HOME}` will be the location of your home directory, typically `/Users/us
 
 ## Step 2: Install the QuPath Cellpose extension
 
-Download the latest `qupath-extension-cellpose-[version].zip` file from [releases](https://github.com/biop/qupath-extension-cellpose/releases) and unzip it into your `extensions` directory. 
-
-If your extensions directory is unset, unzip and drag & drop `qupath-extension-cellpose-[version].jar` onto the main QuPath window. You'll be prompted to select a QuPath user directory.
-The extension will then be copied to a location inside that directory.
-
-To copy `run-cellpose-qc.py`, go to Extensions > Installed Extensions and click on "Open Extensions Directory". You can place the `run-cellpose-qc.py` in the same folder.
-
-You might then need to restart QuPath (but not your computer).
+- Install and setup the [qupath-biop-catalog](https://github.com/BIOP/qupath-biop-catalog) first.
 
 > [!NOTE]
-> In case you do not do this step, Cellpose training will still work, but the QC step will be skipped, and you will be notified that `run-cellpose-qc.py` cannot be found.
-> Additionally, this is the step that requires `scikit-image` as noted above.
+> If your extensions directory is unset, create a new empty folder somewhere on your computer. On QuPath, go under `Edit -> Preferences -> Extensions` and browse the empty folder you've just created.
+> Extensions will then be added inside this folder.
+
+- Open QuPath and click on `Extensions -> Manage extensions`
+- Expand the **QuPath-BIOP catalog** and add the cellpose extension (click on the green button)
+- Select the version to install (the latest the better)
+- Click on `Install`
+- You might then need to restart QuPath (but not your computer).
 
 
 ## QuPath Extension Cellpose/Omnipose: First time setup
@@ -136,6 +135,14 @@ Based on the `mamba` installation above, this is what it should look like on Win
 > [!NOTE]
 > Unless stated otherwise, this extension should work with the latest releases of both Cellpose and Omnipose.
 > If this is not the case, please [open an issue on our GitHub](https://github.com/BIOP/qupath-extension-cellpose/issues/new) or [write a post on the Image.sc forum](https://forum.image.sc/new-topic?category=usage-issues&tags=cellpose-qupath,qupath-cellpose) detailing the problem and the steps necessary to reproduce it.
+
+> [!NOTE]
+> **Precisions for using Cellpose-SAM**
+> 
+> Cellpose-SAM comes with only one pre-trained model called **cpsam**, meaning that all other pre-trained models for previous cellpose version (ex: cyto2, cyto3...) are not compatible anymore.
+> In order to ease the use of Cellpose-SAM and previous versions of Cellpose together within the QuPath extension, you can create 2 different python environments, one for each cellpose version.
+> Then, under `Edit > Preferences > Cellpose/Omnipose`, add the path to Cellpose v < 4 and Cellpose-SAM under the corresponding field.
+> Finally, **The extension handles switching between the two based on the `useCellposeSAM()` flag in the builder.** 
 
 ## Running Cellpose the first time in standalone
 
