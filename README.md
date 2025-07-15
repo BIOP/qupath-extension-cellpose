@@ -13,13 +13,13 @@ We have decided to provide support for both using cellpose and omnipose, in the 
 they can play nice. 
 
 > [!WARNING]
-> Versions above v0.6.0 of this extension **will only work on QuPath 0.4.0 or later**. Please update QuPath to the latest version. 
-> In case you are stuck with QuPath v0.3.2, [the last release to work is v0.5.1](https://github.com/BIOP/qupath-extension-cellpose/releases/tag/v0.5.1)
+> Versions from v0.11.0 of this extension **will only work on QuPath 0.6.0 or later**. Please update QuPath to the latest version. 
+> In case you are stuck with QuPath v0.5.1, [the last release to work is v0.10.2](https://github.com/BIOP/qupath-extension-cellpose/releases/tag/v0.10.2)
 
 
 > [!WARNING]
 > - Currently, the cellpose-extension hasn't been tested on HPC clusters.
-> - The latest version of cellpose (cellpose-sam v4.0.x) is not yet supported by the extension.
+
 
 # Citing
 
