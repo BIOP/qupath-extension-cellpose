@@ -104,6 +104,7 @@ where `{HOME}` will be the location of your home directory, typically `/Users/us
 
 ## Step 2: Install the QuPath Cellpose extension
 
+### On QuPath 0.6.x
 - Install and setup the [qupath-biop-catalog](https://github.com/BIOP/qupath-biop-catalog) first.
 
 > [!NOTE]
@@ -116,6 +117,20 @@ where `{HOME}` will be the location of your home directory, typically `/Users/us
 - Click on `Install`
 - You might then need to restart QuPath (but not your computer).
 
+
+### On QuPath 0.5.x
+Download the latest `qupath-extension-cellpose-[version].zip` file from [releases](https://github.com/biop/qupath-extension-cellpose/releases) and unzip it into your `extensions` directory. 
+
+If your extensions directory is unset, unzip and drag & drop `qupath-extension-cellpose-[version].jar` onto the main QuPath window. You'll be prompted to select a QuPath user directory.
+The extension will then be copied to a location inside that directory.
+
+To copy `run-cellpose-qc.py`, go to Extensions > Installed Extensions and click on "Open Extensions Directory". You can place the `run-cellpose-qc.py` in the same folder.
+
+You might then need to restart QuPath (but not your computer).
+
+> [!NOTE]
+> In case you do not do this step, Cellpose training will still work, but the QC step will be skipped, and you will be notified that `run-cellpose-qc.py` cannot be found.
+> Additionally, this is the step that requires `scikit-image` as noted above.
 
 ## QuPath Extension Cellpose/Omnipose: First time setup
 
