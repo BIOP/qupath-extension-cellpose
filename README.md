@@ -106,15 +106,13 @@ where `{HOME}` will be the location of your home directory, typically `/Users/us
 
 ### On QuPath 0.6.x
 - Install and setup the [qupath-biop-catalog](https://github.com/BIOP/qupath-biop-catalog) first.
-
+- Open the Extension Manager `Extensions -> Manage Extensions`
+- Follow steps described in the [official documention](https://qupath.readthedocs.io/en/latest/docs/intro/extensions.html) to browse and install/update the latest version of **QuPath Cellpose** extension from the **QuPath BIOP** catalog.
+  
 > [!NOTE]
 > If your extensions directory is unset, create a new empty folder somewhere on your computer. On QuPath, go under `Edit -> Preferences -> Extensions` and browse the empty folder you've just created.
 > Extensions will then be added inside this folder.
 
-- Open QuPath and click on `Extensions -> Manage extensions`
-- Expand the **QuPath-BIOP catalog** and add the cellpose extension (click on the green button)
-- Select the version to install (the latest the better)
-- Click on `Install`
 - You might then need to restart QuPath (but not your computer).
 
 
