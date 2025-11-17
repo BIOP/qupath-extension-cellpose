@@ -462,9 +462,9 @@ public class Cellpose2D {
                 logger.info("Resolving cell overlaps for {}", parent);
                 if (creatorFun != null) {
                     // It's awkward, but we need to temporarily convert to cells and back
-                    var cells = finalObjects.stream().map(Cellpose2D::objectToCell).collect(Collectors.toList());
+                    var cells = finalObjects.parallelStream().map(Cellpose2D::objectToCell).collect(Collectors.toList());
                     cells = CellTools.constrainCellOverlaps(cells);
-                    finalObjects = cells.stream().map(c -> cellToObject(c, creatorFun)).collect(Collectors.toList());
+                    finalObjects = cells.parallelStream().map(c -> cellToObject(c, creatorFun)).collect(Collectors.toList());
                 } else
                     finalObjects = CellTools.constrainCellOverlaps(finalObjects);
             }
