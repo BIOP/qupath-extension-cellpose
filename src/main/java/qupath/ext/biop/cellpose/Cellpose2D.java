@@ -446,7 +446,7 @@ public class Cellpose2D {
 
             // Convert to detections, dilating to approximate cells if necessary
             // Drop cells if they fail (rather than catastrophically give up)
-            List<PathObject> finalObjects = filteredDetections.stream()
+            List<PathObject> finalObjects = filteredDetections.parallelStream()
                     .map(n -> {
                         try {
                             return convertToObject(n, parent.getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
