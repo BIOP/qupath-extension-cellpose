@@ -155,7 +155,7 @@ public class Cellpose2D {
     protected Collection<ObjectMeasurements.Compartments> compartments;
     protected Collection<ObjectMeasurements.Measurements> measurements;
     protected int nThreads = -1;
-    public boolean saveTrainingImages;
+    public boolean cleanTrainingDir;
 
     // CELLPOSE PARAMETERS
     public boolean disableGPU;
@@ -910,7 +910,7 @@ public class Cellpose2D {
 
         try {
 
-            if(this.saveTrainingImages) {
+            if(this.cleanTrainingDir) {
                 // Clear a previous run
                 cleanDirectory(this.groundTruthDirectory);
 

@@ -97,7 +97,7 @@ public class CellposeBuilder {
     private boolean doReadResultsAsynchronously = false;
     private boolean disableGPU = false;
     private boolean useTestDir = true;
-    private boolean saveTrainingImages = true;
+    private boolean cleanTrainingDir = false;
     private boolean useCellposeSAM = false;
     private String outputModelName;
 
@@ -143,8 +143,9 @@ public class CellposeBuilder {
      * Overwrite use GPU
      * @param useGPU add or remove the option
      * @return this builder
-     * @deprecated use {@link CellposeBuilder#disableGPU()} instead
+     * @deprecated use {@link #disableGPU()} instead
      */
+    @Deprecated
     public CellposeBuilder useGPU( boolean useGPU ) {
         this.disableGPU = !useGPU;
         return this;
@@ -166,7 +167,6 @@ public class CellposeBuilder {
      */
     public CellposeBuilder useTestDir( boolean useTestDir ) {
         this.useTestDir = useTestDir;
-
         return this;
     }
 
@@ -174,10 +174,20 @@ public class CellposeBuilder {
      * overwrite saveTrainingImages
      * @param saveTrainingImages false to not resave training images
      * @return this builder
+     * @deprecated use {@link #cleanTrainingDir()} instead
      */
+    @Deprecated
     public CellposeBuilder saveTrainingImages( boolean saveTrainingImages ) {
-        this.saveTrainingImages = saveTrainingImages;
+        this.cleanTrainingDir = saveTrainingImages;
+        return this;
+    }
 
+    /**
+     * Delete cellpose training directory
+     * @return this builder
+     */
+    public CellposeBuilder cleanTrainingDir() {
+        this.cleanTrainingDir = true;
         return this;
     }
 
@@ -842,7 +852,7 @@ public class CellposeBuilder {
 
         cellpose.disableGPU = this.disableGPU;
         cellpose.useTestDir = this.useTestDir;
-        cellpose.saveTrainingImages = this.saveTrainingImages;
+        cellpose.cleanTrainingDir = this.cleanTrainingDir;
 
         // Check the model. If it is a file, then it is a custom model
         File file = new File(this.modelNameOrPath);
