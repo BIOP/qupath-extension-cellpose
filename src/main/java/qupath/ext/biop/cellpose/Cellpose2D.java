@@ -158,7 +158,7 @@ public class Cellpose2D {
     public boolean saveTrainingImages;
 
     // CELLPOSE PARAMETERS
-    public boolean useGPU;
+    public boolean disableGPU;
     public boolean useTestDir;
     public String outputModelName;
     public File groundTruthDirectory;
@@ -785,7 +785,7 @@ public class Cellpose2D {
 
         cellposeArguments.add("--no_npy");
 
-        if (this.useGPU) cellposeArguments.add("--use_gpu");
+        if (!this.disableGPU) cellposeArguments.add("--use_gpu");
 
         cellposeArguments.add("--verbose");
 
@@ -970,7 +970,7 @@ public class Cellpose2D {
         });
 
         // Some people may deactivate this...
-        if (this.useGPU) cellposeArguments.add("--use_gpu");
+        if (!this.disableGPU) cellposeArguments.add("--use_gpu");
 
         cellposeArguments.add("--verbose");
 

@@ -44,7 +44,7 @@ def cellpose = Cellpose2D.builder( pathModel )
 //        .measureIntensity()                // Add cell measurements (in all compartments)
 //        .createAnnotations()               // Make annotations instead of detections. This ignores cellExpansion
 //        .simplify( 0 )                     // Simplification 1.6 by default, set to 0 to get the cellpose masks as precisely as possible
-//        .useGPU(false)                     // Force using CPU. Default useGPU(true)
+//        .disableGPU()                      // Force using CPU.
         .build()
 
 // Run detection for the selected objects

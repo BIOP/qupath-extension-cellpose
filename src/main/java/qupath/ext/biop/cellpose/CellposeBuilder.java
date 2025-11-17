@@ -95,7 +95,7 @@ public class CellposeBuilder {
     private ImageOp extendChannelOp = null;
 
     private boolean doReadResultsAsynchronously = false;
-    private boolean useGPU = true;
+    private boolean disableGPU = false;
     private boolean useTestDir = true;
     private boolean saveTrainingImages = true;
     private boolean useCellposeSAM = false;
@@ -140,13 +140,22 @@ public class CellposeBuilder {
     }
 
     /**
-     * overwrite use GPU
+     * Overwrite use GPU
      * @param useGPU add or remove the option
      * @return this builder
+     * @deprecated use {@link CellposeBuilder#disableGPU()} instead
      */
     public CellposeBuilder useGPU( boolean useGPU ) {
-        this.useGPU = useGPU;
+        this.disableGPU = !useGPU;
+        return this;
+    }
 
+    /**
+     * Force using CPU
+     * @return this builder
+     */
+    public CellposeBuilder disableGPU() {
+        this.disableGPU = true;
         return this;
     }
 
@@ -831,7 +840,7 @@ public class CellposeBuilder {
         // Give it the number of threads to use
         cellpose.nThreads = this.nThreads;
 
-        cellpose.useGPU = this.useGPU;
+        cellpose.disableGPU = this.disableGPU;
         cellpose.useTestDir = this.useTestDir;
         cellpose.saveTrainingImages = this.saveTrainingImages;
 
