@@ -895,8 +895,19 @@ public class CellposeBuilder {
 
         // TODO make compatible with --all_channels
         if (this.channels.length > 2) {
-            logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two",this.channels.length);
-            this.channels = Arrays.copyOf(this.channels, 2);
+            // Allow up to 3 channels when using cpsam
+            if (this.useCellposeSAM) {
+                if (this.channels.length > 3) {
+                    logger.warn("You supplied {} channels, but cellposeSAM takes three channels at most. Keeping the first three.", this.channels.length);
+                }
+                else logger.warn("Using cpSAM with 3 channels.");
+                this.channels = Arrays.copyOf(this.channels, 3);
+            }
+            // allow only 2 channels for cellpose <= 3 (no cpsam)
+            else {
+                logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two", this.channels.length);
+                this.channels = Arrays.copyOf(this.channels, 2);
+            }
         }
 
         cellpose.op = ImageOps.buildImageDataOp(this.channels);
