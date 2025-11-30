@@ -155,10 +155,10 @@ public class Cellpose2D {
     protected Collection<ObjectMeasurements.Compartments> compartments;
     protected Collection<ObjectMeasurements.Measurements> measurements;
     protected int nThreads = -1;
-    public boolean saveTrainingImages;
+    public boolean cleanTrainingDir;
 
     // CELLPOSE PARAMETERS
-    public boolean useGPU;
+    public boolean disableGPU;
     public boolean useTestDir;
     public String outputModelName;
     public File groundTruthDirectory;
@@ -446,7 +446,7 @@ public class Cellpose2D {
 
             // Convert to detections, dilating to approximate cells if necessary
             // Drop cells if they fail (rather than catastrophically give up)
-            List<PathObject> finalObjects = filteredDetections.stream()
+            List<PathObject> finalObjects = filteredDetections.parallelStream()
                     .map(n -> {
                         try {
                             return convertToObject(n, parent.getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
@@ -462,9 +462,9 @@ public class Cellpose2D {
                 logger.info("Resolving cell overlaps for {}", parent);
                 if (creatorFun != null) {
                     // It's awkward, but we need to temporarily convert to cells and back
-                    var cells = finalObjects.stream().map(Cellpose2D::objectToCell).collect(Collectors.toList());
+                    var cells = finalObjects.parallelStream().map(Cellpose2D::objectToCell).collect(Collectors.toList());
                     cells = CellTools.constrainCellOverlaps(cells);
-                    finalObjects = cells.stream().map(c -> cellToObject(c, creatorFun)).collect(Collectors.toList());
+                    finalObjects = cells.parallelStream().map(c -> cellToObject(c, creatorFun)).collect(Collectors.toList());
                 } else
                     finalObjects = CellTools.constrainCellOverlaps(finalObjects);
             }
@@ -785,7 +785,7 @@ public class Cellpose2D {
 
         cellposeArguments.add("--no_npy");
 
-        if (this.useGPU) cellposeArguments.add("--use_gpu");
+        if (!this.disableGPU) cellposeArguments.add("--use_gpu");
 
         cellposeArguments.add("--verbose");
 
@@ -910,7 +910,7 @@ public class Cellpose2D {
 
         try {
 
-            if(this.saveTrainingImages) {
+            if(this.cleanTrainingDir) {
                 // Clear a previous run
                 cleanDirectory(this.groundTruthDirectory);
 
@@ -970,7 +970,7 @@ public class Cellpose2D {
         });
 
         // Some people may deactivate this...
-        if (this.useGPU) cellposeArguments.add("--use_gpu");
+        if (!this.disableGPU) cellposeArguments.add("--use_gpu");
 
         cellposeArguments.add("--verbose");
 

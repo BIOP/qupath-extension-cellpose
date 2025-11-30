@@ -7,7 +7,7 @@ plugins {
 qupathExtension {
     name = "qupath-extension-cellpose"
     group = "io.github.qupath"
-    version = "0.11.1-SNAPSHOT"
+    version = "0.11.2-SNAPSHOT"
     description = "QuPath extension to use Cellpose"
     automaticModule = "qupath.ext.biop.cellpose"
 }
