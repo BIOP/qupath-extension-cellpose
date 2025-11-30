@@ -877,20 +877,24 @@ public class CellposeBuilder {
         // TODO make compatible with --all_channels
         if (this.channels.length > 2) {
             // Allow up to 3 channels when using cpsam
-            if (this.useCellposeSAM) {
-                if (this.channels.length > 3) {
-                    logger.warn("You supplied {} channels, but cellposeSAM takes three channels at most. Keeping the first three.", this.channels.length);
+            if (this.useCellposeSAM){
+                if(this.channels.length > 3) {
+                    logger.warn("You supplied {} channels, but Cellpose-SAM takes three channels at most. Keeping the first three.", this.channels.length);
+                    this.channels = Arrays.copyOf(this.channels, 3);
                 }
-                else logger.warn("Using cpSAM with 3 channels.");
-                this.channels = Arrays.copyOf(this.channels, 3);
             }
-            // allow only 2 channels for cellpose <= 3 (no cpsam)
+            // Allow up to 2 channels only for cellpose <= 3 (no cpsam)
             else {
-                logger.warn("You supplied {} channels, but Cellpose needs two channels at most. Keeping the first two", this.channels.length);
+                logger.warn("You supplied {} channels, but Cellpose takes two channels at most. Keeping the first two.", this.channels.length);
                 this.channels = Arrays.copyOf(this.channels, 2);
             }
         }
 
+        if(this.useCellposeSAM) {
+            logger.info("Using Cellpose-SAM with {} channels.", this.channels.length);
+        }else{
+            logger.info("Using Cellpose with {} channels.", this.channels.length);
+        }
         cellpose.op = ImageOps.buildImageDataOp(this.channels);
 
         // these are all the cellpose parameters we wish to send to the command line.
