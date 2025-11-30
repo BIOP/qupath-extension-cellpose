@@ -2,6 +2,7 @@
 deploy/
 target/
 log/
+data/
 
 # IntelliJ
 .idea/
