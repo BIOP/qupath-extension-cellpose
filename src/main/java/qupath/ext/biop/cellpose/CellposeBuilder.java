@@ -61,6 +61,7 @@ public class CellposeBuilder {
 
     private static final Logger logger = LoggerFactory.getLogger(CellposeBuilder.class);
     private final transient CellposeSetup cellposeSetup;
+    private final double DEFAULT_PADDING = 15;
 
     private final List<ImageOp> preprocessing = new ArrayList<>();
     private final LinkedHashMap<String, String> cellposeParameters = new LinkedHashMap<>();
@@ -78,7 +79,8 @@ public class CellposeBuilder {
     private Integer tileHeight = 1024;
     private PathClass globalPathClass = PathClass.getNullClass();
     private Boolean measureShape = Boolean.FALSE;
-    private Boolean constrainToParent = Boolean.TRUE;
+    private boolean constrainToParent = true;
+    private double padding = this.DEFAULT_PADDING;
     private Function<ROI, PathObject> creatorFun;
     private Collection<Compartments> compartments = Arrays.asList(Compartments.values());
     private Collection<Measurements> measurements;
@@ -413,6 +415,19 @@ public class CellposeBuilder {
      */
     public CellposeBuilder constrainToParent(boolean constrainToParent) {
         this.constrainToParent = constrainToParent;
+        return this;
+    }
+
+    /**
+     * If true, constrain nuclei and cells to any parent annotation (default is true).
+     *
+     * @param constrainToParent
+     * @param padding
+     * @return this builder
+     */
+    public CellposeBuilder constrainToParent(boolean constrainToParent, double padding) {
+        this.constrainToParent = constrainToParent;
+        this.padding = padding;
         return this;
     }
 
@@ -931,6 +946,18 @@ public class CellposeBuilder {
         cellpose.measureShape = this.measureShape;
         cellpose.simplifyDistance = this.simplifyDistance;
         cellpose.constrainToParent = this.constrainToParent;
+
+        if(this.constrainToParent){
+            cellpose.padding = 0;
+        }else{
+            if(Double.isFinite(this.padding) && this.padding > 0){
+                cellpose.padding = this.padding;
+            }else{
+                cellpose.padding = this.DEFAULT_PADDING;
+                logger.warn("You supplied an invalid padding ; default one will be used: {} um", this.DEFAULT_PADDING);
+            }
+        }
+
         cellpose.creatorFun = this.creatorFun;
         cellpose.globalPathClass = this.globalPathClass;
         cellpose.outputModelName = this.outputModelName;

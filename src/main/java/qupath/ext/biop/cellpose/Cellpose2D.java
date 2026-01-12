@@ -65,6 +65,7 @@ import qupath.lib.projects.Project;
 import qupath.lib.regions.ImagePlane;
 import qupath.lib.regions.RegionRequest;
 import qupath.lib.roi.GeometryTools;
+import qupath.lib.roi.ROIs;
 import qupath.lib.roi.RoiTools;
 import qupath.lib.roi.interfaces.ROI;
 import qupath.opencv.ops.ImageDataOp;
@@ -96,6 +97,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
@@ -148,7 +150,8 @@ public class Cellpose2D {
     protected boolean ignoreCellOverlaps;
     protected Function<ROI, PathObject> creatorFun;
     protected PathClass globalPathClass;
-    protected boolean constrainToParent = true;
+    protected boolean constrainToParent;
+    protected double padding;
     protected int tileWidth;
     protected int tileHeight;
     protected boolean measureShape = false;
@@ -364,13 +367,39 @@ public class Cellpose2D {
 
         final double finalDownsample = downsample;
 
-        List<TileFile> allTiles = parents.parallelStream().map(parent -> {
+        Map<PathObject, PathObject> tileParentsMap = parents.parallelStream().map(parent -> {
+            ROI roi = parent.getROI();
+            int pad = (int)(padding / cal.getAveragedPixelSize().doubleValue());
+            ROI paddedRoi = ROIs.createRectangleROI(
+                    roi.getBoundsX() - pad,
+                    roi.getBoundsY() - pad,
+                    roi.getBoundsWidth() + 2 * pad,
+                    roi.getBoundsHeight() + 2 * pad
+            );
+
+            Map<PathObject, PathObject> parentExpensionMap = new HashMap<>();
+            parentExpensionMap.put(parent, PathObjects.createAnnotationObject(paddedRoi));
+
+            return parentExpensionMap;
+        }).map(Map::entrySet).flatMap(Set::stream).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+
+        List<TileFile> allTiles = tileParentsMap.entrySet().parallelStream().map(parentEntry -> {
+            PathObject parent = parentEntry.getValue();
+            PathObject realParent = parentEntry.getKey();
+
             RegionRequest request = RegionRequest.createInstance(
                     opServer.getPath(),
                     opServer.getDownsampleForResolution(0),
                     parent.getROI());
 
-            Collection<? extends ROI> rois = RoiTools.computeTiledROIs(parent.getROI(), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileWidth * finalDownsample)), ImmutableDimension.getInstance((int) (tileWidth * finalDownsample * 1.5), (int) (tileHeight * finalDownsample * 1.5)), true, (int) (overlap * finalDownsample));
+            Collection<? extends ROI> rois = RoiTools.computeTiledROIs(
+                    parent.getROI(),
+                    ImmutableDimension.getInstance((int) (tileWidth * finalDownsample), (int) (tileWidth * finalDownsample)),
+                    ImmutableDimension.getInstance((int) (tileWidth * finalDownsample * 1.5), (int) (tileHeight * finalDownsample * 1.5)),
+                    true,
+                    (int) (overlap * finalDownsample)
+            );
 
             List<RegionRequest> tiles = rois.stream().map(r -> RegionRequest.createInstance(opServer.getPath(), opServer.getDownsampleForResolution(0), r)).toList();
 
@@ -410,7 +439,7 @@ public class Cellpose2D {
             List<TileFile> individualTiles = tiles.parallelStream()
                     .map(tile -> {
                         try {
-                            return saveTileImage(opWithPreprocessing, imageData, tile, parent);
+                            return saveTileImage(opWithPreprocessing, imageData, tile, realParent);
                         } catch (IOException e) {
                             logger.warn("Could not save tile image", e);
                         }
@@ -449,7 +478,7 @@ public class Cellpose2D {
             List<PathObject> finalObjects = filteredDetections.parallelStream()
                     .map(n -> {
                         try {
-                            return convertToObject(n, parent.getROI().getImagePlane(), expansion, constrainToParent ? mask : null);
+                            return convertToObject(n, parent.getROI().getImagePlane(), expansion, constrainToParent, mask);
                         } catch (Exception oe) {
                             logger.warn("Error converting to object: {}", oe.getLocalizedMessage(), oe);
                             return null;
@@ -526,7 +555,7 @@ public class Cellpose2D {
         }
     }
 
-    private PathObject convertToObject(CandidateObject object, ImagePlane plane, double cellExpansion, Geometry mask) {
+    private PathObject convertToObject(CandidateObject object, ImagePlane plane, double cellExpansion, boolean constrainToParent, Geometry mask) {
         var geomNucleus = simplify(object.geometry);
         PathObject pathObject;
         if (cellExpansion > 0) {
@@ -534,12 +563,16 @@ public class Cellpose2D {
 //			cellExpansion = Math.round(cellExpansion);
             // Note that prior to QuPath v0.4.0 an extra fix was needed here
             var geomCell = CellTools.estimateCellBoundary(geomNucleus, cellExpansion, cellConstrainScale);
-            if (mask != null) {
+            if (constrainToParent) {
                 geomCell = GeometryTools.attemptOperation(geomCell, g -> g.intersection(mask));
                 // Fix nucleus overlaps (added v0.4.0)
                 var geomCell2 = geomCell;
                 geomNucleus = GeometryTools.attemptOperation(geomNucleus, g -> g.intersection(geomCell2));
                 geomNucleus = GeometryTools.ensurePolygonal(geomNucleus);
+            }else{
+                if(!geomNucleus.intersects(mask)){
+                    return null;
+                }
             }
             geomCell = simplify(geomCell);
 
@@ -565,10 +598,14 @@ public class Cellpose2D {
                 }
             }
         } else {
-            if (mask != null) {
+            if (constrainToParent) {
                 geomNucleus = GeometryTools.attemptOperation(geomNucleus, g -> g.intersection(mask));
                 geomNucleus = GeometryTools.ensurePolygonal(geomNucleus);
                 if (geomNucleus.isEmpty()) {
+                    return null;
+                }
+            } else{
+                if(!geomNucleus.intersects(mask)){
                     return null;
                 }
             }
