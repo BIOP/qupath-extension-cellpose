@@ -45,7 +45,8 @@ def cellpose = Cellpose2D.builder( pathModel )
 //        .createAnnotations()               // Make annotations instead of detections. This ignores cellExpansion
 //        .simplify( 0 )                     // Simplification 1.6 by default, set to 0 to get the cellpose masks as precisely as possible
 //        .disableGPU()                      // Force using CPU.
-//        .constrainToParent(false, 15)      // display all and entirely the cells intersecting the parent annotation, with an optional padding around the parent annotation given in um. Default true and 15um
+//        .excludeEdges()                    // remove cells touching the border => higher priority than constrainToParent()
+//        .constrainToParent(false, 15)      // display all and entirely the cells intersecting the parent annotation, with an optional padding around the parent annotation given in um. Default true and 15um. Ignored if excludeEdges() is called.
         .build()
 
 // Run detection for the selected objects

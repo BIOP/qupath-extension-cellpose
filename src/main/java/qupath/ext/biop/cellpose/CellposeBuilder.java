@@ -80,6 +80,7 @@ public class CellposeBuilder {
     private PathClass globalPathClass = PathClass.getNullClass();
     private Boolean measureShape = Boolean.FALSE;
     private boolean constrainToParent = true;
+    private boolean excludeEdges = false;
     private double padding = this.DEFAULT_PADDING;
     private Function<ROI, PathObject> creatorFun;
     private Collection<Compartments> compartments = Arrays.asList(Compartments.values());
@@ -665,7 +666,7 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder excludeEdges() {
-        addParameter("exclude_on_edges");
+        this.excludeEdges = true;
         return this;
     }
 
@@ -905,8 +906,12 @@ public class CellposeBuilder {
         cellpose.tempDirectory = this.tempDirectory;
         cellpose.doReadResultsAsynchronously = this.doReadResultsAsynchronously;
         cellpose.useCellposeSAM = this.useCellposeSAM;
-
         cellpose.extendChannelOp = this.extendChannelOp;
+
+        if(this.excludeEdges) {
+            addParameter("exclude_on_edges");
+            this.constrainToParent = true;
+        }
 
         // TODO make compatible with --all_channels
         if (this.channels.length > 2) {
