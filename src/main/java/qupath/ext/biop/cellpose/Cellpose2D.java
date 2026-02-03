@@ -142,7 +142,9 @@ public class Cellpose2D {
 
     protected double simplifyDistance = 1.4;
     protected ImageDataOp op;
-    protected OpCreators.TileOpCreator globalPreprocess;
+    protected boolean globalPreprocess;
+    protected OpCreators.TileOpCreator globalPreprocessingProvidedByUser;
+    protected Map<ColorTransforms.ColorTransform, Map<String, Double>> normalizeChannelPercentilesGlobalMap;
     protected List<ImageOp> preprocess;
     protected double pixelSize;
     protected double cellExpansion;
@@ -408,14 +410,28 @@ public class Cellpose2D {
             fullPreprocess.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
 
             // Do global preprocessing calculations, if required
-            if (globalPreprocess != null) {
-                try {
-                    var normalizeOps = globalPreprocess.createOps(op, imageData, parent.getROI(), request.getImagePlane());
-                    fullPreprocess.addAll(normalizeOps);
+            if (globalPreprocess) {
+                try{
+                    if(globalPreprocessingProvidedByUser == null) {
+                        List<ImageOp> splitMergeListImageOp = new ArrayList<>();
 
+                        // apply different global normalization for each channel
+                        for (Map.Entry<ColorTransforms.ColorTransform, Map<String, Double>> entry : this.normalizeChannelPercentilesGlobalMap.entrySet()) {
+                            ColorTransforms.ColorTransform channel = entry.getKey();
+                            Map<String, Double> attributes = entry.getValue();
+
+                            // compute channel normalization
+                            splitMergeListImageOp.add(computeNormalizationImageOps(channel, attributes, imageData, parent.getROI(), request.getImagePlane()));
+                        }
+
+                        // adding global normalization per channel to the pre-processing list
+                        fullPreprocess.add(ImageOps.Core.splitMerge(splitMergeListImageOp));
+                    }else{
+                        var normalizeOps = globalPreprocessingProvidedByUser.createOps(op, imageData, parent.getROI(), request.getImagePlane());
+                        fullPreprocess.addAll(normalizeOps);
+                    }
                     // If this has happened, then we need to disable cellpose normalization
                     this.parameters.put("no_norm", null);
-
                 } catch (IOException e) {
                     throw new RuntimeException("Exception computing global normalization", e);
                 }
@@ -537,6 +553,37 @@ public class Cellpose2D {
         // Update the hierarchy
         imageData.getHierarchy().fireHierarchyChangedEvent(this);
 
+    }
+
+    private ImageOp computeNormalizationImageOps(ColorTransforms.ColorTransform channel,
+                                                 Map<String, Double> attributes,
+                                                 ImageData<BufferedImage> imageData,
+                                                 ROI parentROI,
+                                                 ImagePlane imagePlane) throws IOException {
+
+        // get the percentiles per channels
+        ImageDataOp channelOp = ImageOps.buildImageDataOp(channel);
+        double percentileMin = attributes.get("percentileMin");
+        double percentileMax = attributes.get("percentileMax");
+        double normDownsample = attributes.get("normDownsample");
+        double index = attributes.get("index");
+
+        // create the global normalization operator
+        OpCreators.TileOpCreator normOp = new OpCreators.ImageNormalizationBuilder()
+                .percentiles(percentileMin, percentileMax)
+                .perChannel(true)
+                .downsample(normDownsample)
+                .useMask(true)
+                .build();
+
+        // normalize the channel
+        var normalizeOpsTmp = normOp.createOps(channelOp, imageData, parentROI, imagePlane);
+        List<ImageOp> normalizeOps = new ArrayList<>(normalizeOpsTmp);
+
+        // add the operators to the list
+        normalizeOps.addFirst(ImageOps.Channels.extract((int)index));
+
+        return ImageOps.Core.sequential(normalizeOps);
     }
 
     private void cleanDirectory(File directory) {
@@ -1367,16 +1414,30 @@ public class Cellpose2D {
                     // Do global preprocessing calculations, if required
                     ArrayList<ImageOp> fullPreprocess = new ArrayList<>();
                     fullPreprocess.add(ImageOps.Core.ensureType(PixelType.FLOAT32));
-                    if (globalPreprocess != null) {
+
+                    if (globalPreprocess) {
                         try {
-                            var normalizeOps = globalPreprocess.createOps(op, imageData, null, null);
-                            fullPreprocess.addAll(normalizeOps);
+                            if(globalPreprocessingProvidedByUser == null) {
+                                List<ImageOp> splitMergeListImageOp = new ArrayList<>();
 
-                            // If this has happened, then we should expect to not use the cellpose normalization?
+                                // apply different global normalization for each channel
+                                for (Map.Entry<ColorTransforms.ColorTransform, Map<String, Double>> entry : this.normalizeChannelPercentilesGlobalMap.entrySet()) {
+                                    ColorTransforms.ColorTransform channel = entry.getKey();
+                                    Map<String, Double> attributes = entry.getValue();
+
+                                    // Do channel normalization
+                                    splitMergeListImageOp.add(computeNormalizationImageOps(channel, attributes, imageData, null, null));
+                                }
+                                // adding global normalization per channel to the pre-processing list
+                                fullPreprocess.add(ImageOps.Core.splitMerge(splitMergeListImageOp));
+                            }else{
+                                var normalizeOps = globalPreprocessingProvidedByUser.createOps(op, imageData, null, null);
+                                fullPreprocess.addAll(normalizeOps);
+                            }
+                            // If this has happened, then we need to disable cellpose normalization
                             this.parameters.put("no_norm", null);
-
-                        } catch (IOException ex) {
-                            throw new RuntimeException("Exception computing global normalization", ex);
+                        } catch (IOException e1) {
+                            throw new RuntimeException("Exception computing global normalization", e1);
                         }
                     }
 
