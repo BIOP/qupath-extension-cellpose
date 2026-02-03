@@ -80,6 +80,7 @@ public class CellposeBuilder {
     private PathClass globalPathClass = PathClass.getNullClass();
     private Boolean measureShape = Boolean.FALSE;
     private boolean constrainToParent = true;
+    private boolean excludeEdges = false;
     private double padding = this.DEFAULT_PADDING;
     private Function<ROI, PathObject> creatorFun;
     private Collection<Compartments> compartments = Arrays.asList(Compartments.values());
@@ -408,7 +409,8 @@ public class CellposeBuilder {
     }
 
     /**
-     * If true, constrain nuclei and cells to any parent annotation (default is true).
+     * If true, display all and entirely the cells intersecting the parent annotation, with a padding.
+     * Default is true, with padding of 15um
      *
      * @param constrainToParent
      * @return this builder
@@ -419,10 +421,11 @@ public class CellposeBuilder {
     }
 
     /**
-     * If true, constrain nuclei and cells to any parent annotation (default is true).
+     * If true, display all and entirely the cells intersecting the parent annotation, with a padding.
+     * Default is true, with padding of 15um
      *
      * @param constrainToParent
-     * @param padding
+     * @param padding padding around the parent annotation given in um.
      * @return this builder
      */
     public CellposeBuilder constrainToParent(boolean constrainToParent, double padding) {
@@ -660,17 +663,18 @@ public class CellposeBuilder {
     }
 
     /**
-     * Exclude on edges. Adds --exclude_on_edges flag to cellpose command
+     * Exclude on edges. Adds --exclude_on_edges flag to CellPose command.
+     * It has a higher priority level than {@link CellposeBuilder#constrainToParent(boolean)}
      *
      * @return this builder
      */
     public CellposeBuilder excludeEdges() {
-        addParameter("exclude_on_edges");
+        this.excludeEdges = true;
         return this;
     }
 
     /**
-     * Explicitly set the cellpose channels manually. This corresponds to --chan and --chan2
+     * Explicitly set the CellPose channels manually. This corresponds to --chan and --chan2
      * @param channel1 --chan value passed to cellpose/omnipose
      * @param channel2 --chan2 value passed to cellpose/omnipose
      * @return this builder
@@ -905,8 +909,12 @@ public class CellposeBuilder {
         cellpose.tempDirectory = this.tempDirectory;
         cellpose.doReadResultsAsynchronously = this.doReadResultsAsynchronously;
         cellpose.useCellposeSAM = this.useCellposeSAM;
-
         cellpose.extendChannelOp = this.extendChannelOp;
+
+        if(this.excludeEdges) {
+            addParameter("exclude_on_edges");
+            this.constrainToParent = true;
+        }
 
         // TODO make compatible with --all_channels
         if (this.channels.length > 2) {
