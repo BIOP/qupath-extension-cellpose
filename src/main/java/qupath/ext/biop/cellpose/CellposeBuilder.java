@@ -409,7 +409,8 @@ public class CellposeBuilder {
     }
 
     /**
-     * If true, constrain nuclei and cells to any parent annotation (default is true).
+     * If true, display all and entirely the cells intersecting the parent annotation, with a padding.
+     * Default is true, with padding of 15um
      *
      * @param constrainToParent
      * @return this builder
@@ -420,10 +421,11 @@ public class CellposeBuilder {
     }
 
     /**
-     * If true, constrain nuclei and cells to any parent annotation (default is true).
+     * If true, display all and entirely the cells intersecting the parent annotation, with a padding.
+     * Default is true, with padding of 15um
      *
      * @param constrainToParent
-     * @param padding
+     * @param padding padding around the parent annotation given in um.
      * @return this builder
      */
     public CellposeBuilder constrainToParent(boolean constrainToParent, double padding) {
@@ -661,7 +663,8 @@ public class CellposeBuilder {
     }
 
     /**
-     * Exclude on edges. Adds --exclude_on_edges flag to cellpose command
+     * Exclude on edges. Adds --exclude_on_edges flag to CellPose command.
+     * It has a higher priority level than {@link CellposeBuilder#constrainToParent(boolean)}
      *
      * @return this builder
      */
@@ -671,7 +674,7 @@ public class CellposeBuilder {
     }
 
     /**
-     * Explicitly set the cellpose channels manually. This corresponds to --chan and --chan2
+     * Explicitly set the CellPose channels manually. This corresponds to --chan and --chan2
      * @param channel1 --chan value passed to cellpose/omnipose
      * @param channel2 --chan2 value passed to cellpose/omnipose
      * @return this builder
