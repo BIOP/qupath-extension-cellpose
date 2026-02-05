@@ -26,7 +26,7 @@ def cellpose = Cellpose2D.builder( pathModel )
         .channels( 'DAPI' )	               // Select detection channel(s)
 //        .tempDirectory( new File( '/tmp' ) )         // Temporary directory to export images to. defaults to 'cellpose-temp' inside the QuPath Project
 //        .preprocess( ImageOps.Filters.median( 1 ) )  // List of preprocessing ImageOps to run on the images before exporting them
-//        .normalizePercentilesGlobal( 0.1, 99.8, 10 ) // Convenience global percentile normalization. arguments are percentileMin, percentileMax, dowsample.
+//        .normalizePercentilesGlobal( 0.1, 99.8, 10 ) // Convenience global percentile normalization. arguments are percentileMin, percentileMax, dowsample. If no channel mentioned, arguments are applied for all selected channels. Otherwise, applied only for the selected channel. See https://forum.image.sc/t/cellpose-sam-qupath-extension/112418/27
 //        .tileSize( 1024 )                  // If your GPU can take it, make larger tiles to process fewer of them. Useful for Omnipose
 //        .cellposeChannels( 1,2 )           // Overwrites the logic of this plugin with these two values. These will be sent directly to --chan and --chan2
 //        .cellprobThreshold( 0.0 )          // Threshold for the mask detection, defaults to 0.0
