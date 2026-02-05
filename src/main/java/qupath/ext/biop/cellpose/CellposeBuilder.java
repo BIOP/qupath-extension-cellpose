@@ -62,6 +62,7 @@ public class CellposeBuilder {
     private static final Logger logger = LoggerFactory.getLogger(CellposeBuilder.class);
     private final transient CellposeSetup cellposeSetup;
     private final double DEFAULT_PADDING = 15;
+    private final String ALL_CHANNELS_NORM = "allChannels";
 
     private final List<ImageOp> preprocessing = new ArrayList<>();
     private final LinkedHashMap<String, String> cellposeParameters = new LinkedHashMap<>();
@@ -71,6 +72,7 @@ public class CellposeBuilder {
     private transient File modelDirectory = null;
     // QuPath Object handling options
     private ColorTransform[] channels = new ColorTransform[0];
+    private Map<String, Map<String, Double>> normalizePercentilesGlobalMap = new HashMap<>();
     private Double cellExpansion = Double.NaN;
     private Double cellConstrainScale = Double.NaN;
     private Boolean ignoreCellOverlaps = Boolean.FALSE;
@@ -89,7 +91,8 @@ public class CellposeBuilder {
     private transient String builderName;
     private Integer overlap = null;
     private double simplifyDistance = 1.4;
-    private TileOpCreator globalPreprocessing;
+    private boolean globalPreprocessing = false;
+    private TileOpCreator globalPreprocessingProvidedByUser = null;
     private int nThreads = -1;
 
     private transient File tempDirectory = null;
@@ -274,7 +277,7 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder preprocessGlobal(TileOpCreator global) {
-        this.globalPreprocessing = global;
+        this.globalPreprocessingProvidedByUser = global;
         return this;
     }
 
@@ -817,7 +820,8 @@ public class CellposeBuilder {
     }
 
     /**
-     * Convenience method to call global normalization for the dataset
+     * Convenience method to call global normalization for the dataset.
+     * The same percentiles are applied to all the selected channels.
      *
      * @param percentileMin  the min percentile 0-100
      * @param percentileMax  the max percentile 0-100
@@ -825,18 +829,29 @@ public class CellposeBuilder {
      * @return this builder
      */
     public CellposeBuilder normalizePercentilesGlobal(double percentileMin, double percentileMax, double normDownsample) {
+        this.normalizePercentilesGlobalMap = new HashMap<>();
+        return normalizePercentilesGlobal(this.ALL_CHANNELS_NORM, percentileMin, percentileMax, normDownsample);
+    }
 
-        TileOpCreator normOp = new OpCreators.ImageNormalizationBuilder().percentiles(percentileMin, percentileMax)
-                .perChannel(true)
-                .downsample(normDownsample)
-                .useMask(true)
-                .build();
+    /**
+     * Convenience method to call global normalization for each channel.
+     * Different percentiles can be applied to each channel.
+     *
+     * @param channelName Name of the channel
+     * @param percentileMin  the min percentile 0-100
+     * @param percentileMax  the max percentile 0-100
+     * @param normDownsample a large downsample for the computation to be efficient over the whole image
+     * @return this builder
+     */
+    public CellposeBuilder normalizePercentilesGlobal(String channelName, double percentileMin, double percentileMax, double normDownsample) {
+        Map<String, Double> channelNormalizationAttribute = new HashMap<>();
+        channelNormalizationAttribute.put("percentileMin", percentileMin);
+        channelNormalizationAttribute.put("percentileMax", percentileMax);
+        channelNormalizationAttribute.put("normDownsample", normDownsample);
+        this.globalPreprocessing = true;
+        this.normalizePercentilesGlobalMap.put(channelName, channelNormalizationAttribute);
 
-        // Deactivate cellpose normalization
-        this.noCellposeNormalization();
-
-        // Add this operation to the preprocessing
-        return this.preprocessGlobal(normOp);
+        return this;
     }
 
     /**
@@ -937,12 +952,46 @@ public class CellposeBuilder {
         }else{
             logger.info("Using Cellpose with {} channels.", this.channels.length);
         }
+
         cellpose.op = ImageOps.buildImageDataOp(this.channels);
+
+        // collect percentiles for each channels
+        Map<ColorTransform, Map<String, Double>> normalizeChannelPercentilesGlobalMap = new HashMap<>();
+        if(this.normalizePercentilesGlobalMap.containsKey(this.ALL_CHANNELS_NORM)){
+            // apply the same normalization for all channels
+            for(int i = 0; i < this.channels.length; i++){
+                Map<String, Double> attributes = new HashMap<>(this.normalizePercentilesGlobalMap.get(this.ALL_CHANNELS_NORM));
+                attributes.put("index", (double)i);
+                normalizeChannelPercentilesGlobalMap.put(this.channels[i], attributes);
+            }
+        }else{
+            for(Map.Entry<String, Map<String, Double>> entry: this.normalizePercentilesGlobalMap.entrySet()) {
+                String channelName = entry.getKey();
+                for(int i = 0; i < this.channels.length; i++){
+                    if(this.channels[i].getName().equals(channelName)) {
+                        Map<String, Double> attributes = new HashMap<>(this.normalizePercentilesGlobalMap.get(channelName));
+                        attributes.put("index", (double) i);
+                        normalizeChannelPercentilesGlobalMap.put(this.channels[i], attributes);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // check if the channels are correctly spelt. If not, do not do normalization
+        if(normalizeChannelPercentilesGlobalMap.isEmpty() && this.globalPreprocessing){
+            logger.warn("You choose to normalize image globally with percentiles but none of the provided channels " +
+                    "are matching the channel names given in '.channels(...)'.");
+            logger.warn("Standard CellPose normalization will be applied ; provided normalization will be ignored.");
+            this.globalPreprocessing = false;
+        }
 
         // these are all the cellpose parameters we wish to send to the command line.
         cellpose.parameters = this.cellposeParameters;
 
         cellpose.globalPreprocess = this.globalPreprocessing;
+        cellpose.globalPreprocessingProvidedByUser = this.globalPreprocessingProvidedByUser;
+        cellpose.normalizeChannelPercentilesGlobalMap = normalizeChannelPercentilesGlobalMap;
         cellpose.preprocess = new ArrayList<>(this.preprocessing);
 
         cellpose.pixelSize = this.pixelSize;
