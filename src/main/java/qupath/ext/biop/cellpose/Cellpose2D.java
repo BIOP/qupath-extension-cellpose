@@ -376,7 +376,8 @@ public class Cellpose2D {
                     roi.getBoundsX() - pad,
                     roi.getBoundsY() - pad,
                     roi.getBoundsWidth() + 2 * pad,
-                    roi.getBoundsHeight() + 2 * pad
+                    roi.getBoundsHeight() + 2 * pad,
+                    roi.getImagePlane()
             );
 
             Map<PathObject, PathObject> parentExpensionMap = new HashMap<>();
