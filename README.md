@@ -283,6 +283,25 @@ Two things worth knowing before submitting a job array:
 - **After that, no network is needed.** Once the environment exists, the install step completes
   with every network request refused, so compute nodes without outbound access are fine.
 
+### Machines with more than one GPU
+
+The Appose transport runs on one NVIDIA card. With several, it takes the card with the most free
+memory when QuPath first needs a GPU -- on a desktop with a display card beside a compute card, the
+compute card; on a shared server with identical cards, the least-loaded one rather than always
+card 0 -- chooses the CUDA build
+for that card's compute capability, and pins the Python worker to it with
+`CUDA_DEVICE_ORDER=PCI_BUS_ID` and `CUDA_VISIBLE_DEVICES` set to the card's UUID. The cards found
+and the one used are written to the log.
+
+To use a different card, set **Cellpose Appose GPU (multi-GPU machines)** in
+`Edit > Preferences > Cellpose` to the index `nvidia-smi` shows, or start QuPath with
+`-Dappose.gpuDevice=<index>`. The setting is a shared key (`appose.gpuDevice`), so other
+Appose-based extensions that read it use the same card. It applies when the Python worker next
+starts (`Extensions > Cellpose > Shut down Python worker`).
+
+When QuPath is started with `CUDA_VISIBLE_DEVICES` already set, as cluster schedulers do, the
+automatic choice keeps that allocation and the CUDA build is chosen for the first allocated card.
+
 ### Where the environment lives
 
 By default the environment goes to Appose's usual location

@@ -37,7 +37,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 /**
  * Builds and caches the Appose (pixi) environment used by the in-process {@link ApposeBackend}.
@@ -157,11 +156,11 @@ final class ApposeEnvironments {
         } else {
             logger.info("Preparing the Cellpose Appose environment at {}...", envDir);
         }
-        long buildStart = System.currentTimeMillis();
+        long buildStart = System.nanoTime();
         try {
             Environment built = runBuild(pixiToml);
             logger.info("The Cellpose Appose environment at {} is ready ({} ms)", envDir,
-                    System.currentTimeMillis() - buildStart);
+                    elapsedMs(buildStart));
             return built;
         } catch (BuildException e) {
             String causes = collectCauseMessages(e);
@@ -545,26 +544,19 @@ final class ApposeEnvironments {
     }
 
     /**
-     * Compute capability of the first GPU nvidia-smi reports, e.g. {@code 8.6}.
+     * Every card nvidia-smi reports, with compute capability where the driver can report it.
      *
      * @param nvidiaSmi the nvidia-smi executable to run
-     * @return the capability, or null if it could not be read
+     * @return the cards, possibly empty
      */
-    private static String readComputeCapability(String nvidiaSmi) {
-        String output = runQuietly(List.of(nvidiaSmi, "--query-gpu=compute_cap", "--format=csv,noheader"));
-        if (output == null)
-            return null;
-        List<String> capabilities = output.lines()
-                .map(String::strip)
-                .filter(line -> !line.isEmpty() && !line.startsWith("["))
-                .collect(Collectors.toList());
-        if (capabilities.isEmpty())
-            return null;
-        if (capabilities.stream().distinct().count() > 1) {
-            logger.warn("GPUs with differing compute capabilities are present ({}); selecting the CUDA build for {}",
-                    String.join(", ", capabilities), capabilities.get(0));
-        }
-        return capabilities.get(0);
+    private static List<CellposeGpu.Gpu> listGpus(String nvidiaSmi) {
+        String output = runQuietly(List.of(nvidiaSmi, "--query-gpu=index,uuid,name,compute_cap,memory.total,memory.free",
+                "--format=csv,noheader,nounits"));
+        if (output != null)
+            return CellposeGpu.parse(output, true);
+        // Drivers older than about 510 have no compute_cap field and reject the whole query.
+        return CellposeGpu.parse(runQuietly(List.of(nvidiaSmi, "--query-gpu=index,uuid,name,memory.total,memory.free",
+                "--format=csv,noheader,nounits")), false);
     }
 
     /**
@@ -608,6 +600,18 @@ final class ApposeEnvironments {
     }
 
     /**
+     * Milliseconds since a {@link System#nanoTime()} reading. Durations use the monotonic clock: the
+     * wall clock can step backwards (an NTP or WSL time correction), which logged a tile batch as
+     * taking -687 ms.
+     *
+     * @param startNanos the {@code System.nanoTime()} reading at the start
+     * @return the elapsed milliseconds
+     */
+    static long elapsedMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
+    }
+
+    /**
      * Run the given body with the extension's classloader as the thread context classloader, which
      * Appose's {@code ServiceLoader} lookups need to find the registrations in the shaded JAR.
      *
@@ -640,17 +644,45 @@ final class ApposeEnvironments {
     private static final Object GPU_LOCK = new Object();
     private static boolean gpuProbed;
     private static String nvidiaSmiPath;
-    private static String computeCapabilityValue;
+    private static List<CellposeGpu.Gpu> gpus = List.of();
 
     private static String nvidiaSmi() {
         probeGpu();
         return nvidiaSmiPath;
     }
 
-    /** Compute capability of the first GPU, e.g. {@code 8.6}, or null if there is none to ask. */
+    /**
+     * Compute capability of the card the worker will run on (see {@link CellposeGpu}), e.g.
+     * {@code 8.6}, or null if there is none to ask.
+     */
     private static String computeCapability() {
+        return workerGpu().map(CellposeGpu.Gpu::computeCapability).orElse(null);
+    }
+
+    /** The card the worker will run on, if any. */
+    static java.util.Optional<CellposeGpu.Gpu> workerGpu() {
         probeGpu();
-        return computeCapabilityValue;
+        return CellposeGpu.effective(gpus, CellposeGpu.preferredDevice(), System.getenv("CUDA_VISIBLE_DEVICES"));
+    }
+
+    /**
+     * {@code environment} with its workers pinned to the selected card. Logs the cards and the
+     * choice so a multi-GPU report shows which card was used.
+     */
+    static Environment pinToSelectedGpu(Environment environment) {
+        probeGpu();
+        String inherited = System.getenv("CUDA_VISIBLE_DEVICES");
+        java.util.Optional<CellposeGpu.Gpu> selected =
+                CellposeGpu.select(gpus, CellposeGpu.preferredDevice(), inherited);
+        if (gpus.size() > 1 || selected.isEmpty() && !gpus.isEmpty()) {
+            if (selected.isPresent())
+                logger.info("Cellpose runs on GPU {} (preference '{}'). Cards:\n{}", selected.get().describe(),
+                        CellposeGpu.preferredDevice(), CellposeGpu.describe(gpus));
+            else
+                logger.info("QuPath was started with CUDA_VISIBLE_DEVICES={}; keeping that allocation. Cards:\n{}",
+                        inherited, CellposeGpu.describe(gpus));
+        }
+        return CellposeGpu.pinned(environment, selected);
     }
 
     private static void probeGpu() {
@@ -661,7 +693,7 @@ final class ApposeEnvironments {
             if (gpuProbed)
                 return;
             nvidiaSmiPath = locateNvidiaSmi();
-            computeCapabilityValue = nvidiaSmiPath == null ? null : readComputeCapability(nvidiaSmiPath);
+            gpus = nvidiaSmiPath == null ? List.of() : listGpus(nvidiaSmiPath);
             gpuProbed = true;
         }
     }

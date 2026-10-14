@@ -16,6 +16,7 @@ import qupath.lib.gui.tools.MenuTools;
 import qupath.ext.biop.cellpose.backend.CellposeDevice;
 import qupath.ext.biop.cellpose.backend.CellposeTransport;
 import qupath.ext.biop.cellpose.backend.ApposeBackend;
+import qupath.ext.biop.cellpose.backend.CellposeGpu;
 import qupath.ext.biop.cellpose.ui.PythonConsoleWindow;
 
 import java.io.IOException;
@@ -216,8 +217,23 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
                 .description("Compute device for the in-process (Appose) transport:\nAUTO (default): detect an NVIDIA GPU and use it if present, otherwise CPU.\nGPU: force the CUDA environment.\nCPU: force the CPU environment.")
                 .build();
 
+        PropertySheet.Item gpuItem = new PropertyItemBuilder<>(CellposeGpu.preferenceProperty(), String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.CHOICE)
+                .choices(CellposeGpu.preferenceChoices())
+                .name("Cellpose Appose GPU (multi-GPU machines)")
+                .category("Cellpose/Omnipose")
+                .description("Which NVIDIA GPU the in-process (Appose) transport uses when there is more than one.\n"
+                        + "auto (default): the card with the most free memory when Cellpose first runs; on a desktop "
+                        + "with a display card and a compute card that is the compute card, on a shared server the "
+                        + "least-loaded card. A number is the index nvidia-smi shows.\n"
+                        + "The CUDA build is chosen for that card. The cards found and the one used are written "
+                        + "to the log. When QuPath is started by a cluster scheduler that sets "
+                        + "CUDA_VISIBLE_DEVICES, auto keeps that allocation. Takes effect when the Python worker "
+                        + "next starts (Extensions > Cellpose > Shut down Python worker).")
+                .build();
+
         // Add Permanent Preferences and Populate Preferences
-        QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems().addAll(cellposePathItem, cellposeSAMPathItem, omniposePathItem, condaPathItem, transportItem, deviceItem, apposeEnvDirItem);
+        QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems().addAll(cellposePathItem, cellposeSAMPathItem, omniposePathItem, condaPathItem, transportItem, deviceItem, gpuItem, apposeEnvDirItem);
 
         // The in-process backend keeps its Python worker alive between runs; shutting it down is
         // how a user reclaims the GPU memory it holds without restarting QuPath.

@@ -16,6 +16,8 @@
 
 package qupath.ext.biop.cellpose.backend;
 
+import static qupath.ext.biop.cellpose.backend.ApposeEnvironments.elapsedMs;
+
 import ij.IJ;
 import ij.ImagePlus;
 import ij.process.ShortProcessor;
@@ -137,16 +139,16 @@ public class ApposeBackend implements CellposeBackend {
         // where the subprocess backend rejects it immediately.
         probeFirstTile(tiles.get(0));
 
-        long setupStart = System.currentTimeMillis();
+        long setupStart = System.nanoTime();
         ensureService(params);
         initializeModel(params);
-        logger.info("Cellpose Python worker and model ready in {} ms", System.currentTimeMillis() - setupStart);
+        logger.info("Cellpose Python worker and model ready in {} ms", elapsedMs(setupStart));
 
         int workers = Math.max(1, Math.min(
                 requestedThreads > 0 ? requestedThreads : ThreadTools.getParallelism(),
                 tiles.size()));
         logger.info("Segmenting {} tile(s) with {} worker(s)", tiles.size(), workers);
-        long segmentStart = System.currentTimeMillis();
+        long segmentStart = System.nanoTime();
         int replacementsBefore = workerReplacements.get();
 
         // Bounded, so at most `workers` tiles hold pixels at once.
@@ -181,7 +183,7 @@ public class ApposeBackend implements CellposeBackend {
         }
 
         // The numbers a slow run needs: per-tile cost, and how often the worker had to be rebuilt.
-        long elapsed = System.currentTimeMillis() - segmentStart;
+        long elapsed = elapsedMs(segmentStart);
         logger.info("Segmented {} tile(s) in {} ms ({} ms per tile); the Python worker was replaced {} time(s) during this run",
                 tiles.size(), elapsed, elapsed / tiles.size(), workerReplacements.get() - replacementsBefore);
     }
@@ -200,10 +202,10 @@ public class ApposeBackend implements CellposeBackend {
             inputs.put("model_name", params.isCustomModel() ? null : params.getModel());
             // Clear first, so a failed load cannot leave the worker claiming a model it lacks.
             worker.loadedModel = null;
-            long loadStart = System.currentTimeMillis();
+            long loadStart = System.nanoTime();
             submit(initScript, inputs, "Initializing Cellpose model");
             worker.loadedModel = signature;
-            logger.info("Loaded the Cellpose model {} in {} ms", params.getModel(), System.currentTimeMillis() - loadStart);
+            logger.info("Loaded the Cellpose model {} in {} ms", params.getModel(), elapsedMs(loadStart));
         }
     }
 
@@ -252,12 +254,12 @@ public class ApposeBackend implements CellposeBackend {
             input = allocate(() -> layout == null ? NDArrays.fromImagePlus(imp) : layout.pack(imp));
             labels = allocate(() -> NDArrays.allocateLabels(width, height));
             Map<String, Object> inputs = buildInputs(params, imp.getStackSize(), layout, input, labels);
-            long tileStart = System.currentTimeMillis();
+            long tileStart = System.nanoTime();
             synchronized (pythonLock()) {
                 submit(runScript, inputs, "Segmenting tile " + tile.getImageFile().getName());
             }
             logger.debug("Segmented tile {} ({}x{}, {} channel(s)) in {} ms", tile.getImageFile().getName(),
-                    width, height, imp.getStackSize(), System.currentTimeMillis() - tileStart);
+                    width, height, imp.getStackSize(), elapsedMs(tileStart));
             labelProcessor = NDArrays.labelsToShortProcessor(labels, width, height);
         } finally {
             closeQuietly(input);
@@ -413,7 +415,7 @@ public class ApposeBackend implements CellposeBackend {
         String init = "import numpy\n" + parentWatcherSnippet() + cpUtils;
 
         logger.info("Starting Appose Cellpose service (device={} -> environment {})", device.name(), envName);
-        long startedAt = System.currentTimeMillis();
+        long startedAt = System.nanoTime();
         try {
             Service created = ApposeEnvironments.withExtensionClassLoader(() -> {
                 Environment environment = ApposeEnvironments.getEnvironment();
@@ -422,11 +424,11 @@ public class ApposeBackend implements CellposeBackend {
                 // environment as installed even when it changed nothing. Expected on every start.
                 logger.info("Verifying the {} environment against the lock (pixi install --environment {})",
                         envName, envName);
-                long activateStart = System.currentTimeMillis();
+                long activateStart = System.nanoTime();
                 Environment activated = environment.activate(envName);
                 logger.info("The {} environment was verified in {} ms", envName,
-                        System.currentTimeMillis() - activateStart);
-                Service svc = activated.python();
+                        elapsedMs(activateStart));
+                Service svc = ApposeEnvironments.pinToSelectedGpu(activated).python();
                 // stdout is the Appose IPC channel, so the debug callback is the only route by
                 // which Python diagnostics reach the user.
                 svc.debug(msg -> {
@@ -439,7 +441,7 @@ public class ApposeBackend implements CellposeBackend {
             });
             LIVE_SERVICES.add(created);
             logger.info("Cellpose is running in the {} environment ({}); the Python worker started in {} ms",
-                    envName, device.name(), System.currentTimeMillis() - startedAt);
+                    envName, device.name(), elapsedMs(startedAt));
             Worker w = new Worker(created);
             WORKERS.put(envName, w);
             return w;
@@ -649,10 +651,10 @@ public class ApposeBackend implements CellposeBackend {
                     logger.warn("{}: the Python worker died before running anything (attempt {} of {});"
                             + " replacing it and retrying", description, attempt, THREAD_DEATH_ATTEMPTS);
                     Thread.sleep(THREAD_DEATH_RETRY_DELAY_MS * attempt);
-                    long recoverStart = System.currentTimeMillis();
+                    long recoverStart = System.nanoTime();
                     recoverWorker();
                     logger.info("{}: replaced the Python worker in {} ms", description,
-                            System.currentTimeMillis() - recoverStart);
+                            elapsedMs(recoverStart));
                 }
             }
         }
