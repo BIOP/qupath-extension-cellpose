@@ -532,6 +532,17 @@ final class ApposeEnvironments {
     }
 
     /**
+     * Whether a pixi sub-environment is already installed at the configured location, without
+     * building or verifying anything.
+     *
+     * @param envName the sub-environment, e.g. {@code cp3-cu126}
+     * @return true if its directory exists
+     */
+    static boolean isInstalled(String envName) {
+        return Files.isDirectory(getEnvironmentPath().resolve(".pixi").resolve("envs").resolve(envName));
+    }
+
+    /**
      * Name of the pixi sub-environment to activate for a given model family and CUDA build.
      *
      * @param cellposeSam true for the Cellpose-SAM (Cellpose 4) family, false for Cellpose 3

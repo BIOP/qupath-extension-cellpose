@@ -1,5 +1,6 @@
 package qupath.ext.biop.cellpose;
 
+import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.StringProperty;
 import org.controlsfx.control.PropertySheet;
@@ -27,6 +28,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.stream.Collectors;
@@ -97,6 +99,46 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
      */
     public static void setDevicePreference(CellposeDevice device) {
         cellposeApposeDevice.set(device == null ? CellposeDevice.AUTO : device);
+    }
+
+    /** Start the Appose Python worker with QuPath rather than on the first detection. */
+    private static final BooleanProperty cellposeApposeStartWithQuPath =
+            PathPrefs.createPersistentPreference("cellposeApposeStartWithQuPath", false);
+
+    /** Whether the last Appose detection used Cellpose-SAM, so start-up starts that worker. */
+    private static final BooleanProperty cellposeApposeLastWasSam =
+            PathPrefs.createPersistentPreference("cellposeApposeLastWasSam", false);
+
+    /**
+     * Record which model family the last Appose detection used.
+     *
+     * @param cellposeSam true for Cellpose-SAM (cp4), false for Cellpose 3
+     */
+    public static void setLastApposeFamilyWasSam(boolean cellposeSam) {
+        if (cellposeApposeLastWasSam.get() != cellposeSam)
+            cellposeApposeLastWasSam.set(cellposeSam);
+    }
+
+    private static final AtomicBoolean workerStarting = new AtomicBoolean(false);
+
+    /**
+     * Start the Appose Python worker in the background, if the transport is Appose and the
+     * preference asks for it. At most one start at a time.
+     */
+    private static void startWorkerIfWanted() {
+        if (cellposeTransport.get() != CellposeTransport.APPOSE || !cellposeApposeStartWithQuPath.get())
+            return;
+        if (!workerStarting.compareAndSet(false, true))
+            return;
+        Thread t = new Thread(() -> {
+            try {
+                ApposeBackend.prewarm(cellposeApposeLastWasSam.get(), getDevicePreference());
+            } finally {
+                workerStarting.set(false);
+            }
+        }, "Cellpose-worker-start");
+        t.setDaemon(true);
+        t.start();
     }
 
     private static final LinkedHashMap<String, String> SCRIPTS = new LinkedHashMap<>() {{
@@ -232,8 +274,45 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
                         + "next starts (Extensions > Cellpose > Shut down Python worker).")
                 .build();
 
+        PropertySheet.Item startWithQuPathItem = new PropertyItemBuilder<>(cellposeApposeStartWithQuPath, Boolean.class)
+                .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
+                .name("Cellpose Appose: start the Python worker with QuPath")
+                .category("Cellpose/Omnipose")
+                .description("Start the Appose Python worker in the background when QuPath starts, instead of on "
+                        + "the first detection.\n"
+                        + "Off (default): the first detection in a session waits about 5-8 s while Python starts, "
+                        + "imports Cellpose and PyTorch and prepares the GPU; later detections reuse the worker.\n"
+                        + "On: that wait happens at start-up instead, so the first detection is as fast as the "
+                        + "rest. The worker then holds some GPU memory from the start of the session (Extensions "
+                        + "> Cellpose > Shut down Python worker releases it).\n"
+                        + "It starts the worker for the model family you used last (Cellpose 3 or Cellpose-SAM), "
+                        + "and never installs anything: until the environment has been built by a first "
+                        + "detection, it does nothing. Turning it on starts the worker straight away.")
+                .build();
+
         // Add Permanent Preferences and Populate Preferences
-        QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems().addAll(cellposePathItem, cellposeSAMPathItem, omniposePathItem, condaPathItem, transportItem, deviceItem, gpuItem, apposeEnvDirItem);
+        var items = QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems();
+        items.addAll(cellposePathItem, cellposeSAMPathItem, omniposePathItem, condaPathItem, transportItem, deviceItem, gpuItem, apposeEnvDirItem);
+
+        // The start-up option means nothing for the subprocess transport, so it is only listed
+        // while Appose is selected, directly under the processing type.
+        Runnable showStartOption = () -> {
+            boolean wanted = cellposeTransport.get() == CellposeTransport.APPOSE;
+            if (wanted && !items.contains(startWithQuPathItem))
+                items.add(Math.min(items.indexOf(transportItem) + 1, items.size()), startWithQuPathItem);
+            else if (!wanted)
+                items.remove(startWithQuPathItem);
+        };
+        showStartOption.run();
+        cellposeTransport.addListener((obs, old, now) -> {
+            showStartOption.run();
+            startWorkerIfWanted();
+        });
+        cellposeApposeStartWithQuPath.addListener((obs, old, now) -> {
+            if (Boolean.TRUE.equals(now))
+                startWorkerIfWanted();
+        });
+        startWorkerIfWanted();
 
         // The in-process backend keeps its Python worker alive between runs; shutting it down is
         // how a user reclaims the GPU memory it holds without restarting QuPath.

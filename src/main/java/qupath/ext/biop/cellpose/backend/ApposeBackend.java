@@ -354,6 +354,7 @@ public class ApposeBackend implements CellposeBackend {
         this.envName = envName;
         this.workerParams = params;
         this.workerDevice = device;
+        qupath.ext.biop.cellpose.CellposeExtension.setLastApposeFamilyWasSam(params.isCellposeSam());
 
         boolean reused;
         synchronized (ApposeBackend.class) {
@@ -382,6 +383,62 @@ public class ApposeBackend implements CellposeBackend {
             } catch (IOException e) {
                 logger.warn("Cellpose worker warm-up failed: {}", e.getMessage());
             }
+        }
+    }
+
+    /**
+     * Run in the worker by {@link #prewarm}: the init script has already imported torch and
+     * Cellpose by the time this runs, so what is left is the CUDA context and cuDNN, which PyTorch
+     * loads on the first convolution and which otherwise lands on the first tile (about 1 s).
+     */
+    private static final String PREWARM_SCRIPT = String.join("\n",
+            "use_gpu, device = get_torch_device(use_gpu)",
+            "if device.type == 'cuda':",
+            "    x = torch.zeros(1, 2, 64, 64, device=device)",
+            "    torch.nn.functional.conv2d(x, torch.zeros(32, 2, 3, 3, device=device), padding=1)",
+            "    torch.cuda.synchronize()",
+            "task.update(message=f'Worker ready (device={describe_device(device)}; {runtime_versions()})')");
+
+    /**
+     * Start the Python worker before the first detection: launch it, import torch and Cellpose,
+     * and create the CUDA context. Those take about 5 s on a desktop GPU and are the same for
+     * every model, while loading a model takes about 0.2 s, so the first detection after this
+     * costs about what every later one does. Called at QuPath start-up when the "start the
+     * Python worker with QuPath" preference is on.
+     *
+     * <p>Best-effort, and never builds anything: when the environment for this family and device
+     * has not been installed yet it does nothing, so starting QuPath can never begin a multi-GB
+     * download. A failure is logged and the worker then starts on the first detection, as it would
+     * have without the preference.
+     *
+     * @param cellposeSam true to start the Cellpose-SAM (cp4) worker, false for Cellpose 3
+     * @param device      the compute device preference
+     */
+    public static void prewarm(boolean cellposeSam, CellposeDevice device) {
+        long start = System.nanoTime();
+        ApposeBackend backend = new ApposeBackend(tile -> { });
+        try {
+            String envName = ApposeEnvironments.envName(cellposeSam, ApposeEnvironments.cudaVariant(device));
+            if (!ApposeEnvironments.isInstalled(envName)) {
+                logger.info("Not starting the Cellpose Python worker with QuPath: the {} environment is not "
+                        + "installed yet; it is built on the first detection", envName);
+                return;
+            }
+            backend.ensureService(CellposeSegmentationParams.builder().cellposeSam(cellposeSam).device(device).build());
+            synchronized (backend.pythonLock()) {
+                Map<String, Object> inputs = new HashMap<>();
+                inputs.put("use_gpu", backend.useGpu);
+                backend.submit(PREWARM_SCRIPT, inputs, "Starting the Cellpose Python worker with QuPath");
+            }
+            logger.info("Started the Cellpose Python worker ({}) with QuPath in {} ms; the first detection "
+                    + "only has to load its model", backend.envName, elapsedMs(start));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (IOException | RuntimeException e) {
+            logger.warn("Could not start the Cellpose Python worker with QuPath ({}); it will start on the "
+                    + "first detection instead", e.getMessage());
+        } finally {
+            backend.close();
         }
     }
 

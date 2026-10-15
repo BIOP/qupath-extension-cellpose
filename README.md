@@ -189,6 +189,15 @@ as long as the model and device are unchanged. `Extensions > Cellpose > Shut dow
 ends it, which is how you reclaim the GPU memory it holds without restarting QuPath; the next run
 starts a fresh one.
 
+**Starting the worker with QuPath (optional).** The first detection in a session still pays that
+start-up, about 5-8 s on a desktop GPU. Tick **Cellpose Appose: start the Python worker with QuPath**
+in `Edit > Preferences > Cellpose/Omnipose` (listed while the processing type is Appose; off by
+default) to pay it in the background at start-up instead: the worker is launched, torch and cellpose
+are imported and the GPU is initialised, so the first detection only loads its model (about 0.4 s).
+It starts the worker for the model family used last (Cellpose 3 or Cellpose-SAM), holds its GPU memory
+from start-up, and never installs anything -- until a first detection has built the environment, it
+does nothing.
+
 It also removes the manual Cellpose install and the dependence on a filesystem watch service to
 notice results, and it reports per-tile progress and errors live, honouring cancellation between
 tiles.
