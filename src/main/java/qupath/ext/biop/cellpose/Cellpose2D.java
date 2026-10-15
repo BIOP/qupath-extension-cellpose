@@ -40,6 +40,12 @@ import org.locationtech.jts.index.strtree.STRtree;
 import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.biop.cellpose.backend.ApposeBackend;
+import qupath.ext.biop.cellpose.backend.CellposeBackend;
+import qupath.ext.biop.cellpose.backend.CellposeDevice;
+import qupath.ext.biop.cellpose.backend.CellposeSegmentationParams;
+import qupath.ext.biop.cellpose.backend.CellposeTransport;
+import qupath.ext.biop.cellpose.backend.SubprocessBackend;
 import qupath.ext.biop.cmd.VirtualEnvironmentRunner;
 import qupath.fx.dialogs.Dialogs;
 import qupath.fx.utils.FXUtils;
@@ -83,7 +89,6 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -99,12 +104,10 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -176,6 +179,10 @@ public class Cellpose2D {
     protected File modelDirectory;
     protected boolean doReadResultsAsynchronously;
     protected boolean useCellposeSAM;
+    // Chosen transport for detection. Null means "fall back to the extension preference".
+    protected CellposeTransport transport;
+    // Chosen Appose compute device. Null means "fall back to the extension preference" (AUTO).
+    protected CellposeDevice device;
     File tempDirectory;
     private List<String> theLog;
     private ResultsTable trainingResults;
@@ -272,14 +279,31 @@ public class Cellpose2D {
                 logger.info("Processing with {} threads", nThreads);
             // Using an outer thread poll impacts any parallel streams created inside
             var pool = new ForkJoinPool(nThreads);
+            java.util.concurrent.Future<?> result;
             try {
-                pool.submit(runnable);
+                result = pool.submit(runnable);
             } finally {
                 pool.shutdown();
                 try {
                     pool.awaitTermination(2, TimeUnit.DAYS);
                 } catch (InterruptedException e) {
                     logger.warn("Process was interrupted! {}", e.getLocalizedMessage(), e);
+                    Thread.currentThread().interrupt();
+                }
+            }
+            // Hand a failure inside the pool back to the caller; the discarded future used to
+            // swallow it without even a log line
+            if (result.isDone()) {
+                try {
+                    result.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (java.util.concurrent.ExecutionException e) {
+                    if (e.getCause() instanceof RuntimeException re)
+                        throw re;
+                    if (e.getCause() instanceof Error err)
+                        throw err;
+                    throw new RuntimeException(e.getCause());
                 }
             }
         } else {
@@ -449,30 +473,38 @@ public class Cellpose2D {
             ImageDataOp opWithPreprocessing = op.appendOps(fullPreprocess.toArray(ImageOp[]::new));
 
 
-            // Keep a reference to the images here while they are being saved
-            logger.info("Saving images for {} tiles", tiles.size());
-
-            // Save each tile to an image and keep a reference to it
-            List<TileFile> individualTiles = tiles.parallelStream()
-                    .map(tile -> {
-                        try {
-                            return saveTileImage(opWithPreprocessing, imageData, tile, realParent);
-                        } catch (IOException e) {
-                            logger.warn("Could not save tile image", e);
-                        }
-                        return null;
-                    })
+            if (writesTilesToDisk()) {
+                logger.info("Saving images for {} tiles", tiles.size());
+                return tiles.parallelStream()
+                        .map(tile -> {
+                            try {
+                                return saveTileImage(opWithPreprocessing, imageData, tile, realParent);
+                            } catch (IOException e) {
+                                logger.warn("Could not save tile image", e);
+                            }
+                            return null;
+                        })
+                        .collect(Collectors.toList());
+            }
+            logger.info("Processing {} tiles in memory (no temporary files)", tiles.size());
+            return tiles.stream()
+                    .map(tile -> lazyTile(opWithPreprocessing, imageData, tile, realParent))
                     .collect(Collectors.toList());
-            return individualTiles;
         }).flatMap(List::stream).collect(Collectors.toList());
 
-        // Here the files are saved, and we can run cellpose to recover the masks
+        // Tiles are ready -- on disk for the subprocess backend, in memory for the Appose one
 
-        try {
-            runCellpose(allTiles);
-        } catch (IOException | InterruptedException e) {
-            logger.error("Failed to Run Cellpose", e);
+        try (CellposeBackend backend = createDetectionBackend()) {
+            backend.run(allTiles, buildSegmentationParams());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Cellpose was interrupted; no objects were added");
             return;
+        } catch (IOException e) {
+            // Fail loudly: returning here used to leave the caller with zero objects and no error,
+            // indistinguishable from an image with nothing in it -- in a batch script, a whole
+            // project of empty results.
+            throw new RuntimeException("Cellpose failed: " + e.getMessage(), e);
         }
 
         // Group the candidates per parent object, as this is needed to optimize when checking for overlap
@@ -770,22 +802,8 @@ public class Cellpose2D {
      */
     private TileFile saveTileImage(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request, PathObject parent) throws IOException {
 
-        // This applies all ops to the current tile
-        Mat mat;
-
-        mat = op.apply(imageData, request);
-
-        // Convert to something we can save
-        ImagePlus imp = OpenCVTools.matToImagePlus("Temp", mat);
-
-        //BufferedImage image = OpenCVTools.matToBufferedImage(mat);
-
-        File tempFile = new File(tempDirectory,
-                "Temp_" +
-                        request.getX() + "_" +
-                        request.getY() +
-                        "_z" + request.getZ() +
-                        "_t" + request.getT() + ".tif");
+        ImagePlus imp = createTileImage(op, imageData, request);
+        File tempFile = tileFile(request);
         logger.info("Saving to {}", tempFile);
 
         // Add check if image is too small, do not process it!
@@ -796,6 +814,43 @@ public class Cellpose2D {
         }
 
         return new TileFile(request, tempFile, parent);
+    }
+
+    /**
+     * Describe a tile without materialising it, for the in-process backend. The file name is still
+     * computed, because it is what identifies the tile in log messages.
+     *
+     * @param op        the ops to apply to the tile
+     * @param imageData the current ImageData
+     * @param request   the region this tile covers
+     * @param parent    the real parent object of this tile
+     * @return a tile that computes its image on demand
+     */
+    private TileFile lazyTile(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request, PathObject parent) {
+        return new TileFile(request, tileFile(request), parent, () -> {
+            try {
+                return createTileImage(op, imageData, request);
+            } catch (IOException e) {
+                logger.warn("Could not create tile image for {}", request, e);
+                return null;
+            }
+        });
+    }
+
+    /** Apply the op chain to one tile and convert the result to an ImageJ image. */
+    private ImagePlus createTileImage(ImageDataOp op, ImageData<BufferedImage> imageData, RegionRequest request) throws IOException {
+        Mat mat = op.apply(imageData, request);
+        return OpenCVTools.matToImagePlus("Temp", mat);
+    }
+
+    /** The temporary file name identifying a tile. */
+    private File tileFile(RegionRequest request) {
+        return new File(tempDirectory,
+                "Temp_" +
+                        request.getX() + "_" +
+                        request.getY() +
+                        "_z" + request.getZ() +
+                        "_t" + request.getT() + ".tif");
     }
 
     /**
@@ -835,152 +890,78 @@ public class Cellpose2D {
     }
 
     /**
-     * This class actually runs Cellpose by calling the virtual environment
+     * Whether the transport chosen for this run needs each tile written to disk: the external
+     * subprocess is pointed at a directory, while the in-process backend takes the pixels directly.
      *
-     * @throws IOException          Exception in case files could not be read
-     * @throws InterruptedException Exception in case of command thread has some failing
+     * @return true if tiles must be written to the temporary directory
      */
-    private void runCellpose(List<TileFile> allTiles) throws InterruptedException, IOException {
-
-        // Need to define the name of the command we are running. We used to be able to use 'cellpose' for both but not since Cellpose v2
-        String runCommand = this.parameters.containsKey("omni") ? "omnipose" : "cellpose";
-        VirtualEnvironmentRunner veRunner = getVirtualEnvironmentRunner();
-
-        // This is the list of commands after the 'python' call
-        // We want to ignore all warnings to make sure the log is clean (-W ignore)
-        // We want to be able to call the module by name (-m)
-        // We want to make sure UTF8 mode is by default (-X utf8)
-        List<String> cellposeArguments = new ArrayList<>(Arrays.asList("-Xutf8", "-W", "ignore", "-m", runCommand));
-
-        cellposeArguments.add("--dir");
-        cellposeArguments.add("" + this.tempDirectory);
-
-        cellposeArguments.add("--pretrained_model");
-        cellposeArguments.add(this.model);
-
-        this.parameters.forEach((parameter, value) -> {
-            cellposeArguments.add("--" + parameter);
-            if (value != null) {
-                cellposeArguments.add(value);
-            }
-        });
-
-        // These all work for cellpose v2
-        cellposeArguments.add("--save_tif");
-
-        cellposeArguments.add("--no_npy");
-
-        if (!this.disableGPU) cellposeArguments.add("--use_gpu");
-
-        cellposeArguments.add("--verbose");
-
-        veRunner.setArguments(cellposeArguments);
-
-        // Finally, we can run Cellpose
-        veRunner.runCommand(false);
-
-        processCellposeFiles(veRunner, allTiles);
+    private boolean writesTilesToDisk() {
+        return CellposeBackend.resolveTransport(this.transport, CellposeExtension.getTransportPreference())
+                != CellposeTransport.APPOSE;
     }
 
-    private void processCellposeFiles(VirtualEnvironmentRunner veRunner, List<TileFile> allTiles) throws CancellationException, InterruptedException, IOException {
-
-        // Make sure that allTiles is not null, if it is, just return null
-        // as we are likely just running validation and thus do not need to give any results back
-        if (allTiles == null) {
-            veRunner.getProcess().waitFor();
-            return;
+    /**
+     * Create the backend that will run Cellpose for detection: the builder flag if set, otherwise
+     * the extension-wide preference, otherwise the external subprocess transport.
+     *
+     * @return a ready-to-use {@link CellposeBackend}
+     */
+    private CellposeBackend createDetectionBackend() {
+        CellposeTransport chosen = CellposeBackend.resolveTransport(this.transport, CellposeExtension.getTransportPreference());
+        // The mask reader stays in this class; both backends invoke it through this callback.
+        Consumer<TileFile> tileReader = tile -> tile.setCandidates(readObjectsFromTileFile(tile));
+        if (chosen == CellposeTransport.APPOSE) {
+            logger.info("Running Cellpose with the in-process (Appose) backend");
+            return new ApposeBackend(tileReader, this.nThreads);
         }
+        logger.info("Running Cellpose with the external subprocess backend");
+        return new SubprocessBackend(this.tempDirectory, this.parameters, this.model, this.disableGPU,
+                this.doReadResultsAsynchronously, this::getVirtualEnvironmentRunner, tileReader);
+    }
 
-        // Build a thread pool to process reading the images in parallel
-        ExecutorService executor = Executors.newFixedThreadPool(5);
+    /**
+     * Create the backend used by the training-support paths. This <b>always</b> uses the external
+     * subprocess transport and never consults the detection transport preference or builder flag,
+     * because the in-process backend implements inference only.
+     *
+     * @return a subprocess backend for training-support Cellpose runs (no result reader attached)
+     */
+    CellposeBackend createTrainingSupportBackend() {
+        return new SubprocessBackend(this.tempDirectory, this.parameters, this.model, this.disableGPU,
+                this.doReadResultsAsynchronously, this::getVirtualEnvironmentRunner, null);
+    }
 
-        if (!this.doReadResultsAsynchronously) {
-            // We need to wait for the process to finish
-            veRunner.getProcess().waitFor();
-            allTiles.forEach(entry -> {
-                executor.execute(() -> {
-                    // Read the objects from the file
-                    entry.setCandidates(readObjectsFromTileFile(entry));
-                });
+    /**
+     * Distill the Cellpose flag map into a {@link CellposeSegmentationParams} value object for the
+     * in-process backend, which the subprocess backend does not use.
+     *
+     * @return the segmentation parameters
+     */
+    private CellposeSegmentationParams buildSegmentationParams() {
+        // Device precedence: an explicit builder device, then the disableGPU flag, then the
+        // extension-wide preference.
+        CellposeDevice resolvedDevice = CellposeBackend.resolveDevice(this.device, CellposeExtension.getDevicePreference());
+        if (this.device == null && this.disableGPU)
+            resolvedDevice = CellposeDevice.CPU;
 
-            });
-        } else { // Experimental file listening and running
+        CellposeSegmentationParams.Builder builder = CellposeSegmentationParams.builder()
+                .cellposeSam(this.useCellposeSAM)
+                .device(resolvedDevice)
+                .model(this.model)
+                .customModel(new File(this.model).exists());
 
-            //Make a map of the original names and the expected names
-            LinkedHashMap<File, TileFile> remainingFiles = allTiles.stream().map(entry -> {
-                File expectedFile = entry.getLabelFile();
-                return new AbstractMap.SimpleEntry<>(expectedFile, entry);
-            }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
+        if (this.parameters.containsKey("diameter"))
+            builder.diameter(Double.parseDouble(this.parameters.get("diameter")));
+        if (this.parameters.containsKey("flow_threshold"))
+            builder.flowThreshold(Double.parseDouble(this.parameters.get("flow_threshold")));
+        if (this.parameters.containsKey("cellprob_threshold"))
+            builder.cellprobThreshold(Double.parseDouble(this.parameters.get("cellprob_threshold")));
+        if (this.parameters.containsKey("chan"))
+            builder.channel1(Integer.parseInt(this.parameters.get("chan")));
+        if (this.parameters.containsKey("chan2"))
+            builder.channel2(Integer.parseInt(this.parameters.get("chan2")));
 
-            try {
-                // We need to listen for changes in the temp folder
-                veRunner.startWatchService(this.tempDirectory.toPath());
-
-                // The command above will run in a separate thread, now we can start listening for the files changing
-                while (!remainingFiles.isEmpty() && veRunner.getProcess().isAlive()) {
-                    if (!veRunner.getProcess().isAlive()) {
-                        // It's no longer running so check the exit code
-                        int exitValue = veRunner.getProcess().exitValue();
-                        if (exitValue != 0) {
-                            throw new IOException("Cellpose process exited with value " + exitValue + ". Please check output above for indications of the problem.\nWill attempt to continue");
-                        }
-                    }
-
-                    // Get the files that have changes
-                    List<String> changedFiles = veRunner.getChangedFiles();
-
-                    if (changedFiles.isEmpty()) {
-                        continue;
-                    }
-
-                    // Find the tiles that corresponds to the changed files
-                    LinkedHashMap<File, TileFile> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
-                        // Create a file that matches the mask name
-                        return changedFiles.contains(set.getKey().getName());
-                    }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
-
-                    // Announce that these files are done
-                    finishedFiles.forEach((key, tile) -> executor.execute(() -> {
-                        // Read the objects from the file
-                        tile.setCandidates(readObjectsFromTileFile(tile));
-                    }));
-
-                    // Remove from the queue
-                    finishedFiles.forEach((k, v) -> {
-                        remainingFiles.remove(k);
-                    });
-                }
-            } catch (IOException e) {
-                logger.error(e.getMessage(), e);
-
-            } finally {
-                // No matter what, try and check if there are tiles left
-
-                // Get the files that have changes
-                List<String> changedFiles = veRunner.getChangedFiles();
-
-                // Find the tiles that corresponds to the changed files
-                LinkedHashMap<File, TileFile> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
-                    // Create a file that matches the mask name
-                    return changedFiles.contains(set.getKey().getName());
-                }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
-
-                // Announce that these files are done
-                finishedFiles.forEach((key, tile) -> {
-                    executor.execute(() -> {
-                        // Read the objects from the file
-                        tile.setCandidates(readObjectsFromTileFile(tile));
-                    });
-                });
-                // Remove them from the list of remaining files
-
-                veRunner.closeWatchService();
-
-            }
-        }
-
-        executor.shutdown();
-        executor.awaitTermination(10, TimeUnit.MINUTES);
+        return builder.build();
     }
 
     /**
@@ -1084,7 +1065,9 @@ public class Cellpose2D {
         this.model = this.modelFile.getAbsolutePath();
 
         try {
-            runCellpose(null);
+            // Cellpose only, with no result reading.
+            CellposeBackend backend = createTrainingSupportBackend();
+            backend.run(null, null);
         } catch (InterruptedException | IOException e) {
             logger.error(e.getMessage(), e);
         }
@@ -1502,10 +1485,15 @@ public class Cellpose2D {
     private Collection<CandidateObject> readObjectsFromTileFile(TileFile tileFile) {
         RegionRequest request = tileFile.getTile();
 
-        logger.info("Reading {}", tileFile.getLabelFile().getName());
-        // Open the image
-        ImagePlus label_imp = IJ.openImage(tileFile.getLabelFile().getAbsolutePath());
-        ImageProcessor ip = label_imp.getProcessor();
+        // The in-process backend hands the labels back in memory; the subprocess backend writes
+        // them to disk.
+        ImagePlus label_imp = null;
+        ImageProcessor ip = tileFile.getLabels();
+        if (ip == null) {
+            logger.info("Reading {}", tileFile.getLabelFile().getName());
+            label_imp = IJ.openImage(tileFile.getLabelFile().getAbsolutePath());
+            ip = label_imp.getProcessor();
+        }
 
         Wand wand = new Wand(ip);
 
@@ -1550,7 +1538,10 @@ public class Cellpose2D {
                 }
             }
         }
-        label_imp.close();
+        if (label_imp != null)
+            label_imp.close();
+        // Tracing erases each ROI as it goes, so the labels are spent.
+        tileFile.clearLabels();
         return rois;
     }
 
@@ -1624,78 +1615,4 @@ public class Cellpose2D {
         }
     }
 
-    /**
-     * Static class to hold the correspondence between a
-     * RegionRequest and a saved file.
-     * This also contains a way to infer the resulting image mask file name
-     */
-    private static class TileFile {
-        private final RegionRequest request;
-        private final File imageFile;
-        private final PathObject parent;
-
-        private Collection<CandidateObject> candidates = Collections.emptyList();
-
-
-        TileFile(RegionRequest request, File imageFile, PathObject parent) {
-            this.request = request;
-            this.parent = parent;
-            this.imageFile = imageFile;
-        }
-
-        public File getImageFile() {
-            return imageFile;
-        }
-
-        public File getLabelFile() {
-            return new File(FilenameUtils.removeExtension(imageFile.getAbsolutePath()) + "_cp_masks.tif");
-        }
-
-        public RegionRequest getTile() {
-            return request;
-        }
-
-        public PathObject getParent() {
-            return parent;
-        }
-
-        public Collection<CandidateObject> getCandidates() {
-            return this.candidates;
-        }
-
-        public void setCandidates(Collection<CandidateObject> candidates) {
-            this.candidates = candidates;
-        }
-    }
-
-    /**
-     * Static class that holds each geometry in order to quickly check overlaps
-     */
-    private static class CandidateObject {
-        private final double area;
-        private Geometry geometry;
-        private final PathObject parent; // Perhaps this duplicated things a bit, but we need it to sort the data
-
-        CandidateObject(Geometry geom, PathObject parent) {
-            this.geometry = geom;
-            this.area = geom.getArea();
-            this.parent = parent;
-
-            // Clean up the geometry already
-            geometry = GeometryTools.ensurePolygonal(geometry);
-
-            // Keep only largest polygon?
-            double maxArea = -1;
-            int index = -1;
-
-            for (int i = 0; i < geometry.getNumGeometries(); i++) {
-                double area = geometry.getGeometryN(i).getArea();
-                if (area > maxArea) {
-                    maxArea = area;
-                    index = i;
-                }
-            }
-            geometry = geometry.getGeometryN(index);
-        }
-    }
 }

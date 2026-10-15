@@ -1,0 +1,103 @@
+qupath-extension-cellpose
+Copyright 2020-2026 BioImaging & Optics Platform (BIOP), Ecole Polytechnique Federale de Lausanne
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+===============================================================================
+Third-party components
+===============================================================================
+
+-------------------------------------------------------------------------------
+1. Vendored Cellpose Appose scripts (BSD-3-Clause)
+-------------------------------------------------------------------------------
+
+The following Python scripts and pixi manifest, bundled under
+    src/main/resources/qupath/ext/biop/cellpose/appose/
+        cp3.py
+        cp4.py
+        cp_utils.py
+        cp3_init.py
+        cp4_init.py
+        pixi.toml
+are vendored (with their original license headers preserved) from the
+imglib2-cellpose project:
+
+    Project : imglib2-cellpose
+    Source  : https://github.com/Image-Analysis-Hub/imglib2-cellpose
+    Commit  : 95d6f221ad099eb3731fa8afbced80b56d62eeb6
+    License : BSD-3-Clause
+
+The Python scripts are byte-identical to that commit. pixi.toml carries ONE
+modification, marked by a comment in the file: its `default` environment is
+empty rather than `["cp3", "cu126"]`. Appose runs `pixi install` with no
+--environment before activating a named one, so the default environment is
+installed on every machine; as inherited, that meant every machine downloaded a
+CUDA PyTorch, including machines that go on to use the CPU environment and can
+never run it. The accompanying pixi.lock is generated from this manifest and is
+not part of the upstream project.
+
+In addition, the Appose environment-build and service/model lifecycle used by the
+in-process backend (the classes ApposeBackend and ApposeEnvironments under
+    src/main/java/qupath/ext/biop/cellpose/backend/)
+were adapted, with attribution, from the same imglib2-cellpose project
+(net.imglib2.cellpose.Cellpose and net.imglib2.cellpose.CellposeRunner). The
+BufferedImage/ImageProcessor <-> Appose NDArray marshalling (the NDArrays class)
+is independent original work written against the public Appose NDArray API and does
+not reuse the ImgLib2 RAI/appose bridge.
+
+The full text of the imglib2-cellpose license follows:
+
+Copyright (c) 2026, Appose developpers
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the ImgLib2 nor the names of its contributors
+   may be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+OF THE POSSIBILITY OF SUCH DAMAGE.
+
+-------------------------------------------------------------------------------
+2. Appose (BSD-2-Clause)
+-------------------------------------------------------------------------------
+
+The in-process backend uses Appose (org.apposed:appose:0.12.0) for building the
+Python environment and exchanging data through shared memory.
+
+    Project : Appose
+    Source  : https://github.com/apposed/appose
+    License : BSD-2-Clause
+
+Appose and its transitive dependencies (Apache Ivy, Apache Commons Compress, JNA)
+are consumed as unmodified binary dependencies under their respective licenses.
+
+-------------------------------------------------------------------------------
+3. Apache Groovy JSON module (Apache-2.0)
+-------------------------------------------------------------------------------
+
+Appose's Java-side worker protocol needs groovy.json.JsonOutput. QuPath ships
+Groovy core but not the groovy-json module, so it is added as an explicit
+dependency, pinned to QuPath's own Groovy version.
+
+    Project : Apache Groovy (groovy-json)
+    Source  : https://groovy.apache.org
+    License : Apache-2.0
+
+It is consumed as an unmodified binary dependency.

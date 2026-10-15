@@ -19,6 +19,8 @@ package qupath.ext.biop.cellpose;
 import com.google.gson.Gson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.biop.cellpose.backend.CellposeDevice;
+import qupath.ext.biop.cellpose.backend.CellposeTransport;
 import qupath.lib.analysis.features.ObjectMeasurements.Compartments;
 import qupath.lib.analysis.features.ObjectMeasurements.Measurements;
 import qupath.lib.images.servers.ColorTransforms;
@@ -106,6 +108,10 @@ public class CellposeBuilder {
     private boolean cleanTrainingDir = false;
     private boolean useCellposeSAM = false;
     private String outputModelName;
+    // Null means "use the extension-wide preference".
+    private CellposeTransport transport = null;
+    // Null means "use the extension-wide preference".
+    private CellposeDevice device = null;
 
     /**
      * can create a cellpose builder from a serialized JSON version of this builder.
@@ -666,6 +672,41 @@ public class CellposeBuilder {
     }
 
     /**
+     * Select the transport used to run Cellpose for detection: the default external
+     * {@link CellposeTransport#SUBPROCESS} or the in-process {@link CellposeTransport#APPOSE}.
+     * When set, this overrides the extension-wide preference.
+     *
+     * @param transport the transport to use
+     * @return this builder
+     */
+    public CellposeBuilder transport(CellposeTransport transport) {
+        this.transport = transport;
+        return this;
+    }
+
+    /**
+     * Convenience for {@code transport(CellposeTransport.APPOSE)}.
+     *
+     * @return this builder
+     */
+    public CellposeBuilder useAppose() {
+        return transport(CellposeTransport.APPOSE);
+    }
+
+    /**
+     * Select the compute device for the in-process ({@link CellposeTransport#APPOSE}) transport.
+     * When set, this overrides the extension-wide device preference; the subprocess transport
+     * ignores it.
+     *
+     * @param device the device to use
+     * @return this builder
+     */
+    public CellposeBuilder device(CellposeDevice device) {
+        this.device = device;
+        return this;
+    }
+
+    /**
      * Exclude on edges. Adds --exclude_on_edges flag to CellPose command.
      * It has a higher priority level than {@link CellposeBuilder#constrainToParent(boolean)}
      *
@@ -924,6 +965,8 @@ public class CellposeBuilder {
         cellpose.tempDirectory = this.tempDirectory;
         cellpose.doReadResultsAsynchronously = this.doReadResultsAsynchronously;
         cellpose.useCellposeSAM = this.useCellposeSAM;
+        cellpose.transport = this.transport;
+        cellpose.device = this.device;
         cellpose.extendChannelOp = this.extendChannelOp;
 
         if(this.excludeEdges) {

@@ -1,0 +1,54 @@
+name: Regenerate the Cellpose pixi lock
+
+# The Appose backend installs its Python environment from a committed pixi.lock, so users get the
+# exact dependency tree that was tested rather than a fresh resolution. The lock MUST be generated
+# by the same pixi version Appose bundles: Appose 0.12.0 pins pixi v0.58.0, which reads lock format
+# v6 and rejects the v7 format that newer pixi versions write ("lock file version 7 ... only up to
+# 6 supported"), which would fail every install.
+#
+# Run this after changing pixi.toml, then commit the pixi.lock it produces. Do NOT regenerate the
+# lock with a locally-installed newer pixi: it will write v7, and newer pixi versions actively
+# suggest doing so ("run `pixi lock` to upgrade to v7"), which would break the install for everyone.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Keep in sync with the version in org.apposed.appose.tool.Pixi for the Appose release in use.
+  PIXI_VERSION: v0.58.0
+  MANIFEST: src/main/resources/qupath/ext/biop/cellpose/appose/pixi.toml
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pixi version Appose bundles
+        run: |
+          set -euo pipefail
+          curl -fsSL -o pixi.tar.gz \
+            "https://github.com/prefix-dev/pixi/releases/download/${PIXI_VERSION}/pixi-x86_64-unknown-linux-musl.tar.gz"
+          tar -xzf pixi.tar.gz
+          chmod +x pixi
+          ./pixi --version
+
+      - name: Resolve for every platform the manifest declares
+        run: |
+          set -euo pipefail
+          mkdir -p lockgen
+          cp "${MANIFEST}" lockgen/pixi.toml
+          ./pixi lock --manifest-path lockgen/pixi.toml
+
+      - name: Check the lock is format v6
+        run: |
+          set -euo pipefail
+          head -1 lockgen/pixi.lock
+          test "$(head -1 lockgen/pixi.lock)" = "version: 6"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixi-lock
+          path: lockgen/pixi.lock

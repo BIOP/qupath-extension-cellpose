@@ -1,5 +1,7 @@
 package qupath.ext.biop.cellpose;
 
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.StringProperty;
 import org.controlsfx.control.PropertySheet;
 import org.controlsfx.control.action.Action;
@@ -12,6 +14,11 @@ import qupath.lib.gui.extensions.GitHubProject;
 import qupath.lib.gui.extensions.QuPathExtension;
 import qupath.lib.gui.prefs.PathPrefs;
 import qupath.lib.gui.tools.MenuTools;
+import qupath.ext.biop.cellpose.backend.CellposeDevice;
+import qupath.ext.biop.cellpose.backend.CellposeTransport;
+import qupath.ext.biop.cellpose.backend.ApposeBackend;
+import qupath.ext.biop.cellpose.backend.CellposeGpu;
+import qupath.ext.biop.cellpose.ui.PythonConsoleWindow;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -21,6 +28,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.stream.Collectors;
@@ -36,6 +44,102 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
 
     private static final Logger logger = LoggerFactory.getLogger(CellposeExtension.class);
     private boolean isInstalled = false;
+
+    private static final ObjectProperty<CellposeTransport> cellposeTransport =
+            PathPrefs.createPersistentPreference("cellposeTransport", CellposeTransport.SUBPROCESS, CellposeTransport.class);
+
+    /**
+     * @return the currently selected detection transport preference (defaults to
+     * {@link CellposeTransport#SUBPROCESS}). A builder-level transport, when set, overrides this.
+     */
+    public static CellposeTransport getTransportPreference() {
+        return cellposeTransport.get();
+    }
+
+    /**
+     * Directory containing the in-process backend's Python environment, or empty for the Appose
+     * default ({@code ~/.local/share/appose}).
+     */
+    private static final StringProperty cellposeApposeEnvDir =
+            PathPrefs.createPersistentPreference("cellposeApposeEnvDir", "");
+
+    /**
+     * @return the directory chosen to hold the Appose environment, or an empty string to use the
+     * Appose default location
+     */
+    public static String getApposeEnvDirPreference() {
+        String value = cellposeApposeEnvDir.get();
+        return value == null ? "" : value.strip();
+    }
+
+    /**
+     * Record where the Appose environment should live.
+     *
+     * @param dir the containing directory, or empty/null for the Appose default
+     */
+    public static void setApposeEnvDirPreference(String dir) {
+        cellposeApposeEnvDir.set(dir == null ? "" : dir.strip());
+    }
+
+    private static final ObjectProperty<CellposeDevice> cellposeApposeDevice =
+            PathPrefs.createPersistentPreference("cellposeApposeDevice", CellposeDevice.AUTO, CellposeDevice.class);
+
+    /**
+     * @return the currently selected Appose compute-device preference (defaults to
+     * {@link CellposeDevice#AUTO}). A builder-level device, when set, overrides this.
+     */
+    public static CellposeDevice getDevicePreference() {
+        return cellposeApposeDevice.get();
+    }
+
+    /**
+     * Set the compute device used by the in-process (Appose) transport.
+     *
+     * @param device the device to use; null is treated as {@link CellposeDevice#AUTO}
+     */
+    public static void setDevicePreference(CellposeDevice device) {
+        cellposeApposeDevice.set(device == null ? CellposeDevice.AUTO : device);
+    }
+
+    /** Start the Appose Python worker with QuPath rather than on the first detection. */
+    private static final BooleanProperty cellposeApposeStartWithQuPath =
+            PathPrefs.createPersistentPreference("cellposeApposeStartWithQuPath", false);
+
+    /** Whether the last Appose detection used Cellpose-SAM, so start-up starts that worker. */
+    private static final BooleanProperty cellposeApposeLastWasSam =
+            PathPrefs.createPersistentPreference("cellposeApposeLastWasSam", false);
+
+    /**
+     * Record which model family the last Appose detection used.
+     *
+     * @param cellposeSam true for Cellpose-SAM (cp4), false for Cellpose 3
+     */
+    public static void setLastApposeFamilyWasSam(boolean cellposeSam) {
+        if (cellposeApposeLastWasSam.get() != cellposeSam)
+            cellposeApposeLastWasSam.set(cellposeSam);
+    }
+
+    private static final AtomicBoolean workerStarting = new AtomicBoolean(false);
+
+    /**
+     * Start the Appose Python worker in the background, if the transport is Appose and the
+     * preference asks for it. At most one start at a time.
+     */
+    private static void startWorkerIfWanted() {
+        if (cellposeTransport.get() != CellposeTransport.APPOSE || !cellposeApposeStartWithQuPath.get())
+            return;
+        if (!workerStarting.compareAndSet(false, true))
+            return;
+        Thread t = new Thread(() -> {
+            try {
+                ApposeBackend.prewarm(cellposeApposeLastWasSam.get(), getDevicePreference());
+            } finally {
+                workerStarting.set(false);
+            }
+        }, "Cellpose-worker-start");
+        t.setDaemon(true);
+        t.start();
+    }
 
     private static final LinkedHashMap<String, String> SCRIPTS = new LinkedHashMap<>() {{
         put("Cellpose training script template", "scripts/Cellpose_training_template.groovy");
@@ -117,8 +221,105 @@ public class CellposeExtension implements QuPathExtension, GitHubProject {
                 .description("The full path to you conda/mamba command, in case you want the extension to use the 'conda activate' command.\ne.g 'C:\\ProgramData\\Miniconda3\\condabin\\mamba.bat'\nDo not include quotes (\') or double quotes (\") around the path.")
                 .build();
 
+        PropertySheet.Item transportItem = new PropertyItemBuilder<>(cellposeTransport, CellposeTransport.class)
+                .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
+                .name("Cellpose processing type")
+                .category("Cellpose/Omnipose")
+                .description("How Cellpose runs when detecting objects.\n\n"
+                        + "User's Python installation - standard (default): runs Cellpose from a Python "
+                        + "installation you set up yourself, using the paths above, writing each "
+                        + "image tile to a temporary file.\n\n"
+                        + "Appose - runs faster, self-setup: runs Cellpose inside QuPath and "
+                        + "builds its own Python environment the first time it is used, which is a "
+                        + "multi-GB download taking several minutes. After that, tiles stay in memory "
+                        + "and the Python process is reused between runs.\n\n"
+                        + "Training and the QC notebook always use the Python installation, "
+                        + "whichever is chosen here.")
+                .build();
+
+        PropertySheet.Item apposeEnvDirItem = new PropertyItemBuilder<>(cellposeApposeEnvDir, String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.DIRECTORY)
+                .name("Cellpose Appose environment directory")
+                .category("Cellpose/Omnipose")
+                .description("Where the in-process (Appose) transport keeps its Python environment.\n"
+                        + "Leave empty for the default location (~/.local/share/appose).\n"
+                        + "The environment is several GB, so on a shared workstation it is worth putting it "
+                        + "somewhere other than the system drive.\n"
+                        + "Takes effect on the next detection: any running Python worker is stopped "
+                        + "and the environment is built at the new location.\n"
+                        + "A new location means a new environment. The old one is left where it is, so "
+                        + "delete it yourself to reclaim the space.\n"
+                        + "Avoid paths containing spaces -- pixi cannot build in them.")
+                .build();
+
+        PropertySheet.Item deviceItem = new PropertyItemBuilder<>(cellposeApposeDevice, CellposeDevice.class)
+                .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
+                .name("Cellpose Appose device")
+                .category("Cellpose/Omnipose")
+                .description("Compute device for the in-process (Appose) transport:\nAUTO (default): detect an NVIDIA GPU and use it if present, otherwise CPU.\nGPU: force the CUDA environment.\nCPU: force the CPU environment.")
+                .build();
+
+        PropertySheet.Item gpuItem = new PropertyItemBuilder<>(CellposeGpu.preferenceProperty(), String.class)
+                .propertyType(PropertyItemBuilder.PropertyType.CHOICE)
+                .choices(CellposeGpu.preferenceChoices())
+                .name("Cellpose Appose GPU (multi-GPU machines)")
+                .category("Cellpose/Omnipose")
+                .description("Which NVIDIA GPU the in-process (Appose) transport uses when there is more than one.\n"
+                        + "auto (default): the card with the most free memory when Cellpose first runs; on a desktop "
+                        + "with a display card and a compute card that is the compute card, on a shared server the "
+                        + "least-loaded card. A number is the index nvidia-smi shows.\n"
+                        + "The CUDA build is chosen for that card. The cards found and the one used are written "
+                        + "to the log. When QuPath is started by a cluster scheduler that sets "
+                        + "CUDA_VISIBLE_DEVICES, auto keeps that allocation. Takes effect when the Python worker "
+                        + "next starts (Extensions > Cellpose > Shut down Python worker).")
+                .build();
+
+        PropertySheet.Item startWithQuPathItem = new PropertyItemBuilder<>(cellposeApposeStartWithQuPath, Boolean.class)
+                .propertyType(PropertyItemBuilder.PropertyType.GENERAL)
+                .name("Cellpose Appose: start the Python worker with QuPath")
+                .category("Cellpose/Omnipose")
+                .description("Start the Appose Python worker in the background when QuPath starts, instead of on "
+                        + "the first detection.\n"
+                        + "Off (default): the first detection in a session waits about 5-8 s while Python starts, "
+                        + "imports Cellpose and PyTorch and prepares the GPU; later detections reuse the worker.\n"
+                        + "On: that wait happens at start-up instead, so the first detection is as fast as the "
+                        + "rest. The worker then holds some GPU memory from the start of the session (Extensions "
+                        + "> Cellpose > Shut down Python worker releases it).\n"
+                        + "It starts the worker for the model family you used last (Cellpose 3 or Cellpose-SAM), "
+                        + "and never installs anything: until the environment has been built by a first "
+                        + "detection, it does nothing. Turning it on starts the worker straight away.")
+                .build();
+
         // Add Permanent Preferences and Populate Preferences
-        QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems().addAll(cellposePathItem, cellposeSAMPathItem, omniposePathItem, condaPathItem);
+        var items = QuPathGUI.getInstance().getPreferencePane().getPropertySheet().getItems();
+        items.addAll(cellposePathItem, cellposeSAMPathItem, omniposePathItem, condaPathItem, transportItem, deviceItem, gpuItem, apposeEnvDirItem);
+
+        // The start-up option means nothing for the subprocess transport, so it is only listed
+        // while Appose is selected, directly under the processing type.
+        Runnable showStartOption = () -> {
+            boolean wanted = cellposeTransport.get() == CellposeTransport.APPOSE;
+            if (wanted && !items.contains(startWithQuPathItem))
+                items.add(Math.min(items.indexOf(transportItem) + 1, items.size()), startWithQuPathItem);
+            else if (!wanted)
+                items.remove(startWithQuPathItem);
+        };
+        showStartOption.run();
+        cellposeTransport.addListener((obs, old, now) -> {
+            showStartOption.run();
+            startWorkerIfWanted();
+        });
+        cellposeApposeStartWithQuPath.addListener((obs, old, now) -> {
+            if (Boolean.TRUE.equals(now))
+                startWorkerIfWanted();
+        });
+        startWorkerIfWanted();
+
+        // The in-process backend keeps its Python worker alive between runs; shutting it down is
+        // how a user reclaims the GPU memory it holds without restarting QuPath.
+        MenuTools.addMenuItems(
+                qupath.getMenu("Extensions>Cellpose", true),
+                new Action("Python console", e -> PythonConsoleWindow.show()),
+                new Action("Shut down Python worker", e -> ApposeBackend.shutdownWorkers()));
 
     }
 
