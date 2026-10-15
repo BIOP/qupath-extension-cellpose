@@ -36,6 +36,7 @@ public class VirtualEnvironmentRunner {
     private List<String> arguments;
 
     private List<String> logResults;
+    private Thread outputReader;
     private Process process;
 
     /**
@@ -201,8 +202,8 @@ public class VirtualEnvironmentRunner {
         // Start the process and follow it throughout
         this.process = pb.start();
 
-        // Keep the log of the process
-        logResults = new ArrayList<>();
+        // Keep the log of the process; written by the reader thread, read by callers
+        logResults = Collections.synchronizedList(new ArrayList<>());
 
         Thread t = new Thread(Thread.currentThread().getName() + "-" + this.process.hashCode()) {
             @Override
@@ -221,6 +222,7 @@ public class VirtualEnvironmentRunner {
         };
         t.setDaemon(true);
         t.start();
+        this.outputReader = t;
 
 
         logger.info("Virtual Environment Runner Started");
@@ -240,6 +242,30 @@ public class VirtualEnvironmentRunner {
     }
     public List<String> getProcessLog() {
         return this.logResults;
+    }
+
+    /**
+     * The last lines the process printed, for an error message. Waits briefly for the output to be
+     * drained first, because the process can exit before its last lines (usually the Python
+     * traceback) have been read.
+     *
+     * @param maxLines how many lines to return at most
+     * @return the last lines, oldest first; empty if the process has not been started
+     */
+    public List<String> getProcessLogTail(int maxLines) {
+        if (logResults == null)
+            return List.of();
+        if (outputReader != null) {
+            try {
+                outputReader.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        synchronized (logResults) {
+            int from = Math.max(0, logResults.size() - maxLines);
+            return new ArrayList<>(logResults.subList(from, logResults.size()));
+        }
     }
     public void startWatchService(Path folderToListen) throws IOException {
         this.watchService = FileSystems.getDefault().newWatchService();

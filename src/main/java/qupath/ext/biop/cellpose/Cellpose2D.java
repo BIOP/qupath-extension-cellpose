@@ -279,14 +279,31 @@ public class Cellpose2D {
                 logger.info("Processing with {} threads", nThreads);
             // Using an outer thread poll impacts any parallel streams created inside
             var pool = new ForkJoinPool(nThreads);
+            java.util.concurrent.Future<?> result;
             try {
-                pool.submit(runnable);
+                result = pool.submit(runnable);
             } finally {
                 pool.shutdown();
                 try {
                     pool.awaitTermination(2, TimeUnit.DAYS);
                 } catch (InterruptedException e) {
                     logger.warn("Process was interrupted! {}", e.getLocalizedMessage(), e);
+                    Thread.currentThread().interrupt();
+                }
+            }
+            // Hand a failure inside the pool back to the caller; the discarded future used to
+            // swallow it without even a log line
+            if (result.isDone()) {
+                try {
+                    result.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (java.util.concurrent.ExecutionException e) {
+                    if (e.getCause() instanceof RuntimeException re)
+                        throw re;
+                    if (e.getCause() instanceof Error err)
+                        throw err;
+                    throw new RuntimeException(e.getCause());
                 }
             }
         } else {
@@ -479,9 +496,15 @@ public class Cellpose2D {
 
         try (CellposeBackend backend = createDetectionBackend()) {
             backend.run(allTiles, buildSegmentationParams());
-        } catch (IOException | InterruptedException e) {
-            logger.error("Failed to Run Cellpose", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Cellpose was interrupted; no objects were added");
             return;
+        } catch (IOException e) {
+            // Fail loudly: returning here used to leave the caller with zero objects and no error,
+            // indistinguishable from an image with nothing in it -- in a batch script, a whole
+            // project of empty results.
+            throw new RuntimeException("Cellpose failed: " + e.getMessage(), e);
         }
 
         // Group the candidates per parent object, as this is needed to optimize when checking for overlap

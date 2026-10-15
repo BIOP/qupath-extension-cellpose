@@ -26,9 +26,11 @@ import java.io.IOException;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -145,17 +147,13 @@ public class SubprocessBackend implements CellposeBackend {
 
         // Build a thread pool to process reading the images in parallel
         ExecutorService executor = Executors.newFixedThreadPool(5);
+        // Tiles already handed to the reader, so the final sweep does not read them twice
+        Set<TileFile> dispatched = new HashSet<>();
 
         if (!this.doReadResultsAsynchronously) {
             // We need to wait for the process to finish
             veRunner.getProcess().waitFor();
-            allTiles.forEach(entry -> {
-                executor.execute(() -> {
-                    // Read the objects from the file
-                    tileReader.accept(entry);
-                });
-
-            });
+            checkExitValue(veRunner);
         } else { // Experimental file listening and running
 
             //Make a map of the original names and the expected names
@@ -170,13 +168,6 @@ public class SubprocessBackend implements CellposeBackend {
 
                 // The command above will run in a separate thread, now we can start listening for the files changing
                 while (!remainingFiles.isEmpty() && veRunner.getProcess().isAlive()) {
-                    if (!veRunner.getProcess().isAlive()) {
-                        // It's no longer running so check the exit code
-                        int exitValue = veRunner.getProcess().exitValue();
-                        if (exitValue != 0) {
-                            throw new IOException("Cellpose process exited with value " + exitValue + ". Please check output above for indications of the problem.\nWill attempt to continue");
-                        }
-                    }
 
                     // Get the files that have changes
                     List<String> changedFiles = veRunner.getChangedFiles();
@@ -192,10 +183,10 @@ public class SubprocessBackend implements CellposeBackend {
                     }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
 
                     // Announce that these files are done
-                    finishedFiles.forEach((key, tile) -> executor.execute(() -> {
-                        // Read the objects from the file
-                        tileReader.accept(tile);
-                    }));
+                    finishedFiles.forEach((key, tile) -> {
+                        dispatched.add(tile);
+                        executor.execute(() -> tileReader.accept(tile));
+                    });
 
                     // Remove from the queue
                     finishedFiles.forEach((k, v) -> {
@@ -204,35 +195,56 @@ public class SubprocessBackend implements CellposeBackend {
                 }
             } catch (IOException e) {
                 logger.error(e.getMessage(), e);
-
             } finally {
-                // No matter what, try and check if there are tiles left
-
-                // Get the files that have changes
-                List<String> changedFiles = veRunner.getChangedFiles();
-
-                // Find the tiles that corresponds to the changed files
-                LinkedHashMap<java.io.File, TileFile> finishedFiles = remainingFiles.entrySet().stream().filter(set -> {
-                    // Create a file that matches the mask name
-                    return changedFiles.contains(set.getKey().getName());
-                }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (a, b) -> b, LinkedHashMap::new));
-
-                // Announce that these files are done
-                finishedFiles.forEach((key, tile) -> {
-                    executor.execute(() -> {
-                        // Read the objects from the file
-                        tileReader.accept(tile);
-                    });
-                });
-                // Remove them from the list of remaining files
-
                 veRunner.closeWatchService();
-
             }
+
+            // The loop also ends when the process exits; a failed run must not pass as an empty one
+            veRunner.getProcess().waitFor();
+            checkExitValue(veRunner);
+        }
+
+        // Read every mask Cellpose wrote that has not been read yet. A tile without its mask would
+        // otherwise read as "no objects here" -- or, before this check, as a NullPointerException
+        // on a reader thread, which also ends as zero objects with nothing to tell the caller.
+        List<TileFile> missing = new ArrayList<>();
+        for (TileFile tile : allTiles) {
+            if (dispatched.contains(tile))
+                continue;
+            if (tile.getLabelFile().isFile())
+                executor.execute(() -> tileReader.accept(tile));
+            else
+                missing.add(tile);
         }
 
         executor.shutdown();
         executor.awaitTermination(10, TimeUnit.MINUTES);
+
+        if (!missing.isEmpty()) {
+            throw new IOException("Cellpose finished but wrote no mask for " + missing.size() + " of "
+                    + allTiles.size() + " tile(s), e.g. " + missing.get(0).getLabelFile().getName()
+                    + ". The tiles are in " + this.tempDirectory + "." + describeOutput(veRunner));
+        }
+    }
+
+    /**
+     * Throws if the Cellpose process exited with an error, quoting the end of its output: the
+     * Python traceback is usually there, and without this check a run that died at import (a
+     * missing package, a CUDA error) returned zero objects as if the image were empty.
+     */
+    private static void checkExitValue(VirtualEnvironmentRunner veRunner) throws IOException {
+        int exitValue = veRunner.getProcess().exitValue();
+        if (exitValue != 0) {
+            throw new IOException("Cellpose exited with code " + exitValue + " before returning results."
+                    + describeOutput(veRunner));
+        }
+    }
+
+    private static String describeOutput(VirtualEnvironmentRunner veRunner) {
+        List<String> tail = veRunner.getProcessLogTail(15);
+        if (tail.isEmpty())
+            return " It printed nothing; the full command is in the log above.";
+        return " The last lines it printed:\n  " + String.join("\n  ", tail);
     }
 
     /** No resources to release for the subprocess transport. */
